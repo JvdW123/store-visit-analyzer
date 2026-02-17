@@ -155,6 +155,7 @@ All matching is case-insensitive. Leading/trailing whitespace is stripped before
 ### Shelf Location
 **LLM-normalized.** Only exact matches to valid categories are handled deterministically:
 - "Chilled Section" → "Chilled Section"
+- "Chilled Drinks Section" → "Chilled Section"
 - "To-Go Section" → "To-Go Section"
 - "To-Go Section — Shots" → "To-Go Section — Shots"
 - "Meal Deal Section" → "Meal Deal Section"
@@ -171,20 +172,34 @@ Deterministic rules are applied in order; first match wins per row:
 | 1 | HPP Treatment == "Yes" | "Cold Pressed" |
 | 2 | Processing Method == "HPP" | "Cold Pressed" |
 | 3 | Processing Method == "Freshly Squeezed" | "Squeezed" |
-| 4 | Claims or Notes contain "from concentrate" (case-insensitive) | "From Concentrate" |
-| 5 | Claims or Notes contain "cold pressed" or "cold-pressed" (case-insensitive) | "Cold Pressed" |
-| 6 | Claims or Notes contain "squeezed" or "freshly squeezed" (case-insensitive) | "Squeezed" |
-| 7 | None of the above match | Flag for LLM |
+| 4 | Claims or Notes contain "not from concentrate" (case-insensitive) | "Squeezed" |
+| 5 | Claims or Notes contain "from concentrate" but NOT "not from concentrate" (case-insensitive) | "From Concentrate" |
+| 6 | Claims or Notes contain "cold pressed" or "cold-pressed" (case-insensitive) | "Cold Pressed" |
+| 7 | Claims or Notes contain "squeezed" or "freshly squeezed" (case-insensitive) | "Squeezed" |
+| 8 | None of the above match | Flag for LLM |
 
-**LLM prompt context for Juice Extraction Method:** Brand, Product Name, Claims, Notes, Processing Method, HPP Treatment.
+**LLM prompt context for Juice Extraction Method:** Brand, Sub-brand, Product Name, Claims, Notes, Processing Method, HPP Treatment. The Sub-brand may contain processing terminology (e.g. "Freshly Squeezed", "Cold Pressed").
 
 ### Flavor — LLM Extraction from Product Name
 The raw Excel column "Flavor" actually contains Product Name data (the text on the label/logo). After column mapping remaps raw "Flavor" → "Product Name", the Flavor column is populated by LLM inference.
 
-For every row with a Product Name but no Flavor, the LLM is asked to extract the flavor or fruit combination from the product name. Examples:
+For every row with a Product Name but no Flavor, the LLM is asked to extract ALL flavor/fruit/ingredient components from the product name. Examples:
 - "Innocent Smoothie Orange & Mango 750ml" → Flavor: "Orange & Mango"
 - "Tropicana Pure Premium Orange With Bits" → Flavor: "Orange"
+- "Orange Juice 1L" → Flavor: "Orange"
 - "Naked Green Machine 750ml" → Flavor: "Green Machine"
+- "Apple, Mango & Passion Fruit Smoothie" → Flavor: "Apple, Mango & Passion Fruit"
+- "Strawberry Banana Smoothie" → Flavor: "Strawberry & Banana"
+- "Ginger & Turmeric Shot" → Flavor: "Ginger & Turmeric"
+- "Blueberry & Lion's Mane Kombucha" → Flavor: "Blueberry" (Lion's Mane is a functional ingredient, not a flavor)
+- "Probiotic Mango Juice" → Flavor: "Mango" (Probiotics are a health additive, not a flavor)
+- "Spicy Ginger & Lemon" → Flavor: "Ginger & Lemon" (strip taste modifiers like "spicy")
+
+**Flavor vs. functional ingredient rule:** Include fruits, vegetables, herbs, spices, and culinary ingredients that contribute to taste (Orange, Ginger, Turmeric, Matcha, Mint, etc.). Exclude functional/supplement ingredients that don't describe a taste (Probiotics, Lion's Mane, Collagen, Protein, Vitamins, Ashwagandha, CBD, Spirulina).
+
+**Conjunction standardization:** Always use " & " as separator. After LLM extraction, a post-normalization step:
+1. Checks `FLAVOR_MAP` for exact-match replacements (e.g. "Strawberry Banana" → "Strawberry & Banana")
+2. Normalizes "/" separators to " & " (e.g. "Ginger/Turmeric" → "Ginger & Turmeric")
 
 If no clear flavor can be determined, Flavor is left blank.
 
@@ -252,6 +267,20 @@ MASTER SCHEMA VALID VALUES:
 - Stock Status: "In Stock", "Out of Stock"
 - Shelf Level: "1st", "2nd", "3rd", "4th", "5th", "6th"
 - Shelf Location: "Chilled Section", "To-Go Section", "To-Go Section — Shots", "Meal Deal Section"
+- Flavor: free text (extract from Product Name)
+
+COLUMN-SPECIFIC INSTRUCTIONS:
+- Processing Method: determine if the product is "Pasteurized" or "HPP" based
+  on Claims, Notes, and Brand. If you cannot determine, return blank.
+- Juice Extraction Method: consider the full row context — Brand, Sub-brand,
+  Product Name, Claims, Notes, Processing Method, HPP Treatment. The Sub-brand
+  may contain processing terminology. Claims mentioning "not from concentrate"
+  indicate "Squeezed" (NOT "From Concentrate").
+- Flavor: Extract ALL flavor components from Product Name, joined with " & ".
+  Include taste ingredients (fruits, herbs, spices). Exclude functional/supplement
+  ingredients that don't describe taste (Probiotics, Lion's Mane, Collagen, etc.).
+  Strip taste modifiers ("Spicy Ginger" → "Ginger") but keep varietal modifiers
+  ("Blood Orange" → "Blood Orange"). See full instructions in code.
 
 ITEMS TO RESOLVE:
 {flagged_items_json}

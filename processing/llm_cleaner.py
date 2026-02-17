@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
+from config.normalization_rules import FLAVOR_MAP
 from config.schema import VALID_VALUES
 from processing.normalizer import FlaggedItem
 
@@ -60,15 +61,52 @@ MASTER SCHEMA VALID VALUES:
 COLUMN-SPECIFIC INSTRUCTIONS:
 - Processing Method: determine if the product is "Pasteurized" or "HPP" based
   on Claims, Notes, and Brand. If you cannot determine, return blank.
-- Juice Extraction Method: consider the full row context — Brand, Product Name,
-  Claims, Notes, Processing Method, HPP Treatment. Valid values: "Cold Pressed",
-  "Squeezed", "From Concentrate".
-- Flavor: Extract the flavor/fruit description from the Product Name. If the 
-  product name itself IS a flavor description (e.g. Berry Energise), use it as 
-  the Flavor. Only return blank if there is truly no flavor information at all. 
-  Examples: Smooth Orange 900ml → Orange, Berry Energise → Berry Energise, 
-  Tropical Blast 1.35L → Tropical Blast, 7x Ginger Shots → Ginger, Naked Green 
-  Machine 750ml → Green Machine, Tropicana Pure Premium Orange With Bits → Orange.
+- Juice Extraction Method: consider the full row context — Brand, Sub-brand,
+  Product Name, Claims, Notes, Processing Method, HPP Treatment. The Sub-brand
+  may contain processing terminology (e.g. "Freshly Squeezed", "Cold Pressed").
+  Claims mentioning "not from concentrate" indicate "Squeezed" (NOT "From
+  Concentrate"). Valid values: "Cold Pressed", "Squeezed", "From Concentrate".
+- Flavor: Extract ALL flavor/fruit/ingredient components from the Product Name.
+  Include every flavor-relevant ingredient mentioned, joined with " & ".
+  Always use " & " as the separator (not "/", "and", or comma-only).
+
+  INCLUDE as flavors: fruits, vegetables, herbs, spices, and culinary
+  ingredients that contribute to taste (e.g. Orange, Mango, Ginger,
+  Turmeric, Mint, Beetroot, Carrot, Lemon, Lime, Matcha).
+
+  EXCLUDE from flavors: functional/supplement ingredients that do NOT
+  describe a taste (e.g. Probiotics, Lion's Mane, Collagen, Protein,
+  Vitamins, Ashwagandha, CBD, Spirulina). These are health additives,
+  not flavors — omit them from the Flavor field entirely.
+
+  EDGE CASE — Ginger, Turmeric, Matcha: these ARE flavors because they
+  have a distinct taste. Include them. The test is: "does this ingredient
+  define what the drink tastes like?" If yes, it is a flavor.
+
+  Strip taste-modifier adjectives that don't identify a distinct variety:
+  "Spicy Ginger" → "Ginger", "Sweet Mango" → "Mango".
+  BUT keep varietal/type modifiers: "Blood Orange" → "Blood Orange",
+  "Pink Grapefruit" → "Pink Grapefruit".
+
+  If the product name itself IS a flavor description (e.g. Berry Energise,
+  Green Machine), use it as the Flavor.
+  Only return blank if there is truly no flavor information at all.
+
+  Examples:
+    Smooth Orange 900ml → Orange
+    Orange Juice 1L → Orange
+    Berry Energise → Berry Energise
+    Tropical Blast 1.35L → Tropical Blast
+    7x Ginger Shots → Ginger
+    Naked Green Machine 750ml → Green Machine
+    Tropicana Pure Premium Orange With Bits → Orange
+    Apple, Mango & Passion Fruit Smoothie → Apple, Mango & Passion Fruit
+    Strawberry Banana Smoothie → Strawberry & Banana
+    Ginger & Turmeric Shot → Ginger & Turmeric
+    Blueberry & Lion's Mane Kombucha → Blueberry
+    Probiotic Mango Juice → Mango
+    Spicy Ginger & Lemon → Ginger & Lemon
+
 - Product Name cleanup: If the Product Name contains volume/size info (e.g. 900 ml, 
   1.35L, 750ml), multipack counts (e.g. 7x), or pack size numbers, note this in 
   your reasoning. These should be in the Packaging Size column, not in the Product Name.
@@ -390,6 +428,17 @@ def _validate_and_apply(
             })
             continue
 
+        # Post-process Flavor values through FLAVOR_MAP / separator normalizer
+        if column == "Flavor":
+            original_llm_value = normalized_value
+            normalized_value = _normalize_flavor(normalized_value)
+            if normalized_value != original_llm_value:
+                logger.debug(
+                    f"Flavor post-normalization: '{original_llm_value}' "
+                    f"→ '{normalized_value}'"
+                )
+                decision = {**decision, "normalized_value": normalized_value}
+
         # Apply the valid decision
         dataframe.at[row_index, column] = normalized_value
         resolved.append(decision)
@@ -423,6 +472,36 @@ def _create_batches(
         batches.append(items[start : start + max_per_batch])
 
     return batches
+
+
+def _normalize_flavor(value: str) -> str:
+    """
+    Post-extraction normalization for Flavor values.
+
+    1. Check FLAVOR_MAP for an exact (case-insensitive) replacement.
+    2. If not found, apply general separator normalization:
+       replace "/" with " & " (handling optional surrounding spaces).
+
+    Args:
+        value: The raw Flavor string from the LLM.
+
+    Returns:
+        Normalized Flavor string.
+    """
+    if not value or not value.strip():
+        return value
+
+    stripped = value.strip()
+    lookup_key = stripped.lower()
+
+    # Exact match in FLAVOR_MAP
+    if lookup_key in FLAVOR_MAP:
+        return FLAVOR_MAP[lookup_key]
+
+    # General separator normalization: " / " or "/" → " & "
+    normalized = re.sub(r"\s*/\s*", " & ", stripped)
+
+    return normalized
 
 
 # ═══════════════════════════════════════════════════════════════════════════

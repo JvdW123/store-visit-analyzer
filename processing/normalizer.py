@@ -65,6 +65,7 @@ class NormalizationResult:
 # from Processing Method + Claims + Notes).
 _CONTEXT_COLUMNS: list[str] = [
     "Brand",
+    "Sub-brand",
     "Product Name",
     "Flavor",
     "Product Type",
@@ -339,10 +340,12 @@ def _infer_juice_extraction_method(
       1. HPP Treatment == "Yes"                       → "Cold Pressed"
       2. Processing Method == "HPP"                   → "Cold Pressed"
       3. Processing Method == "Freshly Squeezed"      → "Squeezed"
-      4. Claims/Notes contain "from concentrate"      → "From Concentrate"
-      5. Claims/Notes contain "cold pressed"/"cold-pressed" → "Cold Pressed"
-      6. Claims/Notes contain "squeezed"/"freshly squeezed" → "Squeezed"
-      7. None matched AND value is blank              → flag for LLM
+      4. Claims/Notes contain "not from concentrate"  → "Squeezed"
+      5. Claims/Notes contain "from concentrate"
+         (but NOT "not from concentrate")             → "From Concentrate"
+      6. Claims/Notes contain "cold pressed"/"cold-pressed" → "Cold Pressed"
+      7. Claims/Notes contain "squeezed"/"freshly squeezed" → "Squeezed"
+      8. None matched AND value is blank              → flag for LLM
 
     Args:
         dataframe: DataFrame to modify IN PLACE.
@@ -420,15 +423,19 @@ def _infer_juice_extraction_method(
         elif proc_val == "Freshly Squeezed":
             inferred = "Squeezed"
             rule_desc = "Processing Method = Freshly Squeezed"
-        # Rule 4: Claims/Notes contain "from concentrate"
+        # Rule 4: Claims/Notes contain "not from concentrate" → Squeezed
+        elif "not from concentrate" in text_combined:
+            inferred = "Squeezed"
+            rule_desc = "Claims/Notes contain 'not from concentrate'"
+        # Rule 5: Claims/Notes contain "from concentrate" (excluding "not from concentrate")
         elif "from concentrate" in text_combined:
             inferred = "From Concentrate"
             rule_desc = "Claims/Notes contain 'from concentrate'"
-        # Rule 5: Claims/Notes contain "cold pressed" or "cold-pressed"
+        # Rule 6: Claims/Notes contain "cold pressed" or "cold-pressed"
         elif "cold pressed" in text_combined or "cold-pressed" in text_combined:
             inferred = "Cold Pressed"
             rule_desc = "Claims/Notes contain 'cold pressed'"
-        # Rule 6: Claims/Notes contain "squeezed" or "freshly squeezed"
+        # Rule 7: Claims/Notes contain "squeezed" or "freshly squeezed"
         elif "squeezed" in text_combined:
             inferred = "Squeezed"
             rule_desc = "Claims/Notes contain 'squeezed'"
@@ -443,7 +450,7 @@ def _infer_juice_extraction_method(
                 "method": f"deterministic rule ({rule_desc})",
             })
         else:
-            # Rule 7: flag for LLM
+            # Rule 8: flag for LLM
             context = _build_context(dataframe, idx)
             flagged.append(FlaggedItem(
                 row_index=idx,

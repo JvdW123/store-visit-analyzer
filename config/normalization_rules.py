@@ -129,10 +129,24 @@ STOCK_STATUS_MAP: dict[str, str] = {
 # ---------------------------------------------------------------------------
 SHELF_LOCATION_MAP: dict[str, str] = {
     "chilled section": "Chilled Section",
+    "chilled drinks section": "Chilled Section",
     "to-go section": "To-Go Section",
     "to-go section — shots": "To-Go Section — Shots",
     "to-go section - shots": "To-Go Section — Shots",
     "meal deal section": "Meal Deal Section",
+}
+
+# ---------------------------------------------------------------------------
+# Flavor — Post-extraction normalization.
+# Applied AFTER LLM extraction to standardize conjunction formats.
+# Unlike other maps, this is not for invalid-value rejection — Flavor is
+# free text.  Exact matches (lowercased) are replaced; unmatched values
+# are left as-is.  A general separator normalizer (/ → &) is also applied.
+# ---------------------------------------------------------------------------
+FLAVOR_MAP: dict[str, str] = {
+    "strawberry banana": "Strawberry & Banana",
+    "ginger/turmeric": "Ginger & Turmeric",
+    "ginger / turmeric": "Ginger & Turmeric",
 }
 
 # ---------------------------------------------------------------------------
