@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
-from config.schema import COLUMN_TYPES
+from config.schema import COLUMN_TYPES, VALID_VALUES
 
 logger = logging.getLogger(__name__)
 
@@ -179,6 +179,15 @@ def _safe_convert(
     try:
         float_val = float(cleaned)
     except ValueError:
+        # Check if the value matches a categorical value from another column
+        for cat_column, valid_set in VALID_VALUES.items():
+            if raw_str in valid_set:
+                error_msg = (
+                    f"Value '{raw_str}' in column '{column}' appears to be a "
+                    f"'{cat_column}' value — possible column misalignment in source file"
+                )
+                return None, error_msg
+        # Default error message if no match found
         return None, f"Cannot convert '{raw_str}' to number"
 
     if target_type == "integer":

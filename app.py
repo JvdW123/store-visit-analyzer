@@ -103,6 +103,9 @@ def _init_session_state() -> None:
         "source_files_info": [],
         "llm_resolved_count": 0,
         "llm_skipped": False,
+        "total_llm_cost": 0.0,
+        "total_input_tokens": 0,
+        "total_output_tokens": 0,
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -503,6 +506,11 @@ if (
                     dataframe = llm_result.dataframe
                     llm_resolved_count += len(llm_result.resolved_items)
                     llm_skipped = llm_result.skipped
+                    
+                    # Accumulate token usage and cost
+                    st.session_state["total_llm_cost"] += llm_result.api_cost_estimate
+                    st.session_state["total_input_tokens"] += llm_result.input_tokens
+                    st.session_state["total_output_tokens"] += llm_result.output_tokens
 
                     # Remove resolved items from the flagged list
                     resolved_keys = {
@@ -714,7 +722,7 @@ if (
     else:
         pct_deterministic = pct_llm = pct_flagged = 0.0
 
-    metric_cols = st.columns(5)
+    metric_cols = st.columns(6)
     with metric_cols[0]:
         st.metric("Files Processed", len(source_files_info))
     with metric_cols[1]:
@@ -725,6 +733,15 @@ if (
         st.metric("Cleaned (LLM)", f"{llm_resolved_count} ({pct_llm}%)")
     with metric_cols[4]:
         st.metric("Flagged for Review", f"{flagged_count} ({pct_flagged}%)")
+    with metric_cols[5]:
+        total_cost = st.session_state.get("total_llm_cost", 0.0)
+        total_in = st.session_state.get("total_input_tokens", 0)
+        total_out = st.session_state.get("total_output_tokens", 0)
+        st.metric(
+            "LLM Cost",
+            f"${total_cost:.3f}",
+            delta=f"{total_in:,} in / {total_out:,} out tokens"
+        )
 
     if llm_skipped and not api_key:
         st.info(
@@ -786,13 +803,13 @@ if (
     st.divider()
     st.header("📋 Step 3: Data Error Check")
 
-    # Build the set of flagged cells for highlighting
-    flagged_cells_set: set[tuple[int, str]] = {
-        (item.row_index, item.column) for item in all_flagged_items
+    # Build the dict of flagged cells with reasons for highlighting
+    flagged_cells_dict: dict[tuple[int, str], str] = {
+        (item.row_index, item.column): item.reason for item in all_flagged_items
     }
 
     # Identify rows that have at least one flagged cell
-    flagged_row_indices: set[int] = {row_idx for row_idx, _ in flagged_cells_set}
+    flagged_row_indices: set[int] = {row_idx for row_idx, _ in flagged_cells_dict.keys()}
     total_rows = len(final_df)
     flagged_row_count = len(flagged_row_indices & set(final_df.index))
 
@@ -800,31 +817,10 @@ if (
         st.success("All data clean!")
     else:
         st.warning(
-            f"{flagged_row_count} rows with issues out of {total_rows} total rows"
+            f"{len(flagged_cells_dict)} cells flagged for review across {flagged_row_count} rows — "
+            "download the Excel, fix the yellow-highlighted cells (see Issue Description column), "
+            "then re-upload below."
         )
-
-        # Filter to only flagged rows, preserving original index for write-back
-        error_df = final_df.loc[final_df.index.isin(flagged_row_indices)].copy()
-
-        # Show editable table for flagged rows
-        edited_error_df = st.data_editor(
-            error_df,
-            use_container_width=True,
-            hide_index=True,
-            num_rows="fixed",
-            key="error_editor",
-        )
-
-        # Apply user edits back to the final DataFrame
-        for col in edited_error_df.columns:
-            for idx in edited_error_df.index:
-                new_val = edited_error_df.at[idx, col]
-                old_val = final_df.at[idx, col]
-                both_na = pd.isna(new_val) and pd.isna(old_val)
-                if not both_na and new_val != old_val:
-                    final_df.at[idx, col] = new_val
-
-        st.session_state["final_dataframe"] = final_df
 
     # Expandable full data view (collapsed by default)
     with st.expander("View Full Data"):
@@ -842,7 +838,7 @@ if (
                 dataframe=final_df,
                 quality_report=quality_report,
                 source_files_info=source_files_info,
-                flagged_cells=flagged_cells_set,
+                flagged_cells=flagged_cells_dict,
                 output_path=output_path,
             )
 
@@ -864,3 +860,32 @@ if (
         f"File contains {len(final_df)} SKU rows across 3 sheets: "
         "SKU Data, Data Quality Report, Source Files."
     )
+
+    # ── Re-upload Corrected Master ────────────────────────────────
+    st.divider()
+    st.header("📤 Re-upload Corrected Master")
+    
+    corrected_file = st.file_uploader(
+        "Upload corrected Excel",
+        type=["xlsx"],
+        key="corrected_master_upload",
+        help="Upload the master file after fixing any flagged cells"
+    )
+    
+    if corrected_file is not None:
+        try:
+            # Read the corrected file
+            corrected_df = pd.read_excel(corrected_file, sheet_name="SKU Data")
+            
+            # Drop Issue Description column if present
+            if "Issue Description" in corrected_df.columns:
+                corrected_df = corrected_df.drop(columns=["Issue Description"])
+            
+            # Update session state with corrected dataframe
+            st.session_state["final_dataframe"] = corrected_df
+            
+            st.success(f"✅ Corrected master uploaded successfully! {len(corrected_df)} rows loaded.")
+            st.rerun()
+            
+        except Exception as exc:
+            st.error(f"Error reading corrected file: {exc}")

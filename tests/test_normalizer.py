@@ -74,6 +74,10 @@ class TestProductTypeNormalization:
         assert len(result.flagged_items) >= 1
         flagged_cols = [f.column for f in result.flagged_items]
         assert "Product Type" in flagged_cols
+        # Check that reason is populated
+        product_flagged = [f for f in result.flagged_items if f.column == "Product Type"]
+        assert len(product_flagged) > 0
+        assert product_flagged[0].reason == "'Health Juice' not in allowed values for Product Type"
 
     def test_blank_not_flagged(self):
         df = _make_df({"Product Type": None})
@@ -230,6 +234,7 @@ class TestShelfLocationNormalization:
         loc_flagged = [f for f in result.flagged_items if f.column == "Shelf Location"]
         assert len(loc_flagged) == 1
         assert loc_flagged[0].original_value == "Front of store chiller"
+        assert loc_flagged[0].reason == "'Front of store chiller' not in allowed values for Shelf Location"
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -328,6 +333,7 @@ class TestJuiceExtractionMethodInference:
             f for f in result.flagged_items if f.column == "Juice Extraction Method"
         ]
         assert len(jem_flagged) == 1
+        assert jem_flagged[0].reason == "Could not determine Juice Extraction Method from available data"
 
     def test_valid_value_not_overwritten(self):
         """A value already in VALID_VALUES should not be changed."""
@@ -347,6 +353,7 @@ class TestJuiceExtractionMethodInference:
             f for f in result.flagged_items if f.column == "Juice Extraction Method"
         ]
         assert len(jem_flagged) == 1
+        assert jem_flagged[0].reason == "'hand squeezed' not in allowed values for Juice Extraction Method"
 
     def test_rule_priority_hpp_over_claims(self):
         """Rule 1 (HPP Treatment=Yes) takes priority over Rule 4 (from concentrate in Claims)."""
@@ -381,6 +388,7 @@ class TestFlavorFlagging:
         result = normalize(df)
         flavor_flagged = [f for f in result.flagged_items if f.column == "Flavor"]
         assert len(flavor_flagged) == 1
+        assert flavor_flagged[0].reason == "Flavor is empty — extract from Product Name 'Innocent Smoothie Orange & Mango 750ml'"
 
     def test_product_name_with_flavor_not_flagged(self):
         """Row with both Product Name and Flavor should not be flagged."""
@@ -412,6 +420,7 @@ class TestFlavorFlagging:
         flavor_flagged = [f for f in result.flagged_items if f.column == "Flavor"]
         assert len(flavor_flagged) == 1
         assert flavor_flagged[0].context.get("Product Name") == "Tropicana Pure Premium Orange"
+        assert flavor_flagged[0].reason == "Flavor is empty — extract from Product Name 'Tropicana Pure Premium Orange'"
 
 
 # ═══════════════════════════════════════════════════════════════════════════

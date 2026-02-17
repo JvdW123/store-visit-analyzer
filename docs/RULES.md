@@ -265,3 +265,51 @@ Return a JSON array where each element has:
 ```
 
 **Fallback if no API key:** Skip LLM step. Output file has ambiguous cells highlighted in yellow with a "Needs Review" flag.
+
+---
+
+## Excel Output Format
+
+The tool generates a formatted Excel workbook with three sheets:
+
+### Sheet 1: SKU Data
+- All master columns in the defined schema order
+- Yellow highlighting on cells that require review
+- **Issue Description column** (added as the LAST column when flagged cells exist):
+  - Consolidates all issues for each row
+  - Format: "ColumnName: reason | ColumnName2: reason2"
+  - Example: "Product Type: 'Health Juice' not in allowed values for Product Type | Flavor: Flavor is empty — extract from Product Name 'Tropicana Orange 750ml'"
+  - Only appears when there are flagged cells in the dataset
+- Auto-filter enabled on header row
+- Frozen header row for easy scrolling
+- Number formats applied (currency, integers, decimals)
+
+### Sheet 2: Data Quality Report
+- Summary statistics (total rows, files processed, clean status)
+- Null counts by column
+- Normalization log (sample of changes made)
+- Exchange rates used
+- Remaining flagged items list
+
+### Sheet 3: Source Files
+- Audit trail of all processed files
+- Columns: Filename, Retailer, City, Store Format, Row Count, Date Processed
+
+---
+
+## Re-upload Corrected Master Workflow
+
+After downloading the Excel file with flagged cells:
+
+1. **Review flagged cells**: Yellow-highlighted cells indicate data that needs correction
+2. **Check Issue Description column**: See consolidated reasons for all issues in each row
+3. **Fix the data**: Edit the yellow-highlighted cells directly in Excel
+4. **Re-upload**: Use the "Re-upload Corrected Master" section in the app
+   - Upload the corrected Excel file
+   - The tool will:
+     - Read from the "SKU Data" sheet
+     - Automatically drop the Issue Description column
+     - Update the session with the corrected data
+     - Display success message with row count
+
+**Note:** The in-app data editor has been replaced with this download-fix-reupload workflow to provide better visibility of issues and allow for more complex corrections in Excel.

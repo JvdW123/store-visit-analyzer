@@ -47,6 +47,7 @@ class FlaggedItem:
     row_index: int
     column: str
     original_value: str
+    reason: str = ""
     context: dict[str, str] = field(default_factory=dict)
 
 
@@ -216,6 +217,7 @@ def _normalize_column(
                 row_index=idx,
                 column=column,
                 original_value=original_str,
+                reason=f"'{original_str}' not in allowed values for {column}",
                 context=context,
             ))
             logger.debug(
@@ -314,6 +316,7 @@ def _flag_llm_only_column(
             row_index=idx,
             column=column,
             original_value=original_str,
+            reason=f"{column} requires review",
             context=context,
         ))
 
@@ -374,6 +377,7 @@ def _infer_juice_extraction_method(
                 row_index=idx,
                 column=col,
                 original_value=str(current_value).strip(),
+                reason=f"'{str(current_value).strip()}' not in allowed values for {col}",
                 context=context,
             ))
             continue
@@ -445,6 +449,7 @@ def _infer_juice_extraction_method(
                 row_index=idx,
                 column=col,
                 original_value="",
+                reason="Could not determine Juice Extraction Method from available data",
                 context=context,
             ))
 
@@ -495,11 +500,13 @@ def _flag_missing_flavor(
             if not pd.isna(flavor) and str(flavor).strip() != "":
                 continue
 
+        product_name_str = str(product_name).strip()
         context = _build_context(dataframe, idx)
         flagged.append(FlaggedItem(
             row_index=idx,
             column="Flavor",
             original_value="",
+            reason=f"Flavor is empty — extract from Product Name '{product_name_str}'",
             context=context,
         ))
 

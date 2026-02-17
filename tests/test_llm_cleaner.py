@@ -30,12 +30,14 @@ def _make_flagged_item(
     row_index: int = 0,
     column: str = "Product Type",
     original_value: str = "Health Juice",
+    reason: str = "Test reason",
     context: dict | None = None,
 ) -> FlaggedItem:
     return FlaggedItem(
         row_index=row_index,
         column=column,
         original_value=original_value,
+        reason=reason,
         context=context or {"Brand": "Tropicana", "Claims": "100% organic"},
     )
 
@@ -286,7 +288,7 @@ class TestMockedAPICall:
             "normalized_value": "Other",
             "reasoning": "Not a standard category.",
         }])
-        mock_api.return_value = (mock_response, 0.005)
+        mock_api.return_value = (mock_response, 0.005, 100, 50)
 
         df = _make_df_for_llm()
         flagged = [_make_flagged_item(row_index=0)]
@@ -315,7 +317,7 @@ class TestMockedAPICall:
                 "reasoning": "guess",
             },
         ])
-        mock_api.return_value = (mock_response, 0.005)
+        mock_api.return_value = (mock_response, 0.005, 100, 50)
 
         df = _make_df_for_llm()
         flagged = [

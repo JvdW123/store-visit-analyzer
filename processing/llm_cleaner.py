@@ -63,11 +63,15 @@ COLUMN-SPECIFIC INSTRUCTIONS:
 - Juice Extraction Method: consider the full row context — Brand, Product Name,
   Claims, Notes, Processing Method, HPP Treatment. Valid values: "Cold Pressed",
   "Squeezed", "From Concentrate".
-- Flavor: extract the flavor or fruit combination from the Product Name. Focus
-  on the fruit/ingredient descriptors. For example: "Innocent Smoothie Orange &
-  Mango 750ml" → "Orange & Mango", "Tropicana Pure Premium Orange With Bits" →
-  "Orange", "Naked Green Machine 750ml" → "Green Machine". If no clear flavor,
-  return blank.
+- Flavor: Extract the flavor/fruit description from the Product Name. If the 
+  product name itself IS a flavor description (e.g. Berry Energise), use it as 
+  the Flavor. Only return blank if there is truly no flavor information at all. 
+  Examples: Smooth Orange 900ml → Orange, Berry Energise → Berry Energise, 
+  Tropical Blast 1.35L → Tropical Blast, 7x Ginger Shots → Ginger, Naked Green 
+  Machine 750ml → Green Machine, Tropicana Pure Premium Orange With Bits → Orange.
+- Product Name cleanup: If the Product Name contains volume/size info (e.g. 900 ml, 
+  1.35L, 750ml), multipack counts (e.g. 7x), or pack size numbers, note this in 
+  your reasoning. These should be in the Packaging Size column, not in the Product Name.
 
 ITEMS TO RESOLVE:
 {flagged_items_json}
@@ -93,6 +97,8 @@ class LLMCleaningResult:
     rejected_items: list[dict] = field(default_factory=list)
     skipped: bool = False
     api_cost_estimate: float = 0.0
+    input_tokens: int = 0
+    output_tokens: int = 0
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -137,6 +143,8 @@ def clean_with_llm(
     all_resolved: list[dict] = []
     all_rejected: list[dict] = []
     total_cost: float = 0.0
+    total_input_tokens: int = 0
+    total_output_tokens: int = 0
 
     for batch_idx, batch in enumerate(batches):
         logger.info(
@@ -147,18 +155,20 @@ def clean_with_llm(
         prompt = _build_prompt(batch)
 
         try:
-            response_text, cost = _call_sonnet_api(prompt, api_key)
+            response_text, cost, input_tokens, output_tokens = _call_sonnet_api(prompt, api_key)
         except Exception as exc:
             logger.error(f"LLM API call failed: {exc}")
             # Try once more after a short delay
             try:
                 time.sleep(2)
-                response_text, cost = _call_sonnet_api(prompt, api_key)
+                response_text, cost, input_tokens, output_tokens = _call_sonnet_api(prompt, api_key)
             except Exception as retry_exc:
                 logger.error(f"LLM API retry also failed: {retry_exc}")
                 continue
 
         total_cost += cost
+        total_input_tokens += input_tokens
+        total_output_tokens += output_tokens
 
         llm_decisions = _parse_llm_response(response_text)
         if llm_decisions is None:
@@ -180,6 +190,8 @@ def clean_with_llm(
         rejected_items=all_rejected,
         skipped=False,
         api_cost_estimate=total_cost,
+        input_tokens=total_input_tokens,
+        output_tokens=total_output_tokens,
     )
 
 
@@ -216,19 +228,19 @@ def _build_prompt(flagged_items: list[FlaggedItem]) -> str:
     return _PROMPT_TEMPLATE.format(flagged_items_json=flagged_json)
 
 
-def _call_sonnet_api(prompt: str, api_key: str) -> tuple[str, float]:
+def _call_sonnet_api(prompt: str, api_key: str) -> tuple[str, float, int, int]:
     """
     Call the Claude Sonnet API with the given prompt.
 
-    Uses the anthropic Python SDK.  Returns the response text and an
-    estimated cost based on token usage.
+    Uses the anthropic Python SDK.  Returns the response text, estimated cost,
+    and token usage counts.
 
     Args:
         prompt: The complete prompt string.
         api_key: Anthropic API key.
 
     Returns:
-        (response_text, estimated_cost_usd)
+        (response_text, estimated_cost_usd, input_tokens, output_tokens)
 
     Raises:
         Exception: On API errors (network, auth, rate limit, etc.).
@@ -255,7 +267,7 @@ def _call_sonnet_api(prompt: str, api_key: str) -> tuple[str, float]:
         f"{output_tokens} output tokens, est. cost ${estimated_cost:.4f}"
     )
 
-    return response_text, estimated_cost
+    return response_text, estimated_cost, input_tokens, output_tokens
 
 
 def _parse_llm_response(response_text: str) -> list[dict] | None:

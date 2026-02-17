@@ -67,7 +67,7 @@ def _make_source_files_info() -> list[dict]:
 def _save_and_load(
     tmp_path: Path,
     df: pd.DataFrame | None = None,
-    flagged: set | None = None,
+    flagged: dict | None = None,
 ) -> openpyxl.Workbook:
     """Save an Excel file and re-open it for inspection."""
     if df is None:
@@ -77,7 +77,7 @@ def _save_and_load(
         dataframe=df,
         quality_report=_make_quality_report(),
         source_files_info=_make_source_files_info(),
-        flagged_cells=flagged or set(),
+        flagged_cells=flagged or {},
         output_path=output_path,
     )
     return openpyxl.load_workbook(str(output_path))
@@ -142,7 +142,7 @@ class TestSKUDataSheet:
 class TestFlaggedHighlighting:
     def test_flagged_cell_has_yellow_fill(self, tmp_path):
         df = _make_test_df(rows=2)
-        flagged = {(0, "Product Type")}
+        flagged = {(0, "Product Type"): "Test reason"}
         wb = _save_and_load(tmp_path, df=df, flagged=flagged)
         ws = wb["SKU Data"]
 
@@ -157,7 +157,7 @@ class TestFlaggedHighlighting:
 
     def test_non_flagged_cell_no_yellow(self, tmp_path):
         df = _make_test_df(rows=2)
-        flagged = {(0, "Product Type")}
+        flagged = {(0, "Product Type"): "Test reason"}
         wb = _save_and_load(tmp_path, df=df, flagged=flagged)
         ws = wb["SKU Data"]
 
@@ -168,6 +168,45 @@ class TestFlaggedHighlighting:
         # Row 2 Brand should NOT be yellow
         cell = ws.cell(row=2, column=brand_col_idx)
         assert cell.fill.start_color.rgb != "00FFFF00" or cell.fill.fill_type is None
+        wb.close()
+
+    def test_issue_description_column_added(self, tmp_path):
+        """Test that Issue Description column is added when there are flagged cells."""
+        df = _make_test_df(rows=2)
+        flagged = {
+            (0, "Product Type"): "'Invalid Type' not in allowed values for Product Type",
+            (0, "Brand"): "Brand requires review"
+        }
+        wb = _save_and_load(tmp_path, df=df, flagged=flagged)
+        ws = wb["SKU Data"]
+
+        # Check that Issue Description column exists in header
+        header_values = [cell.value for cell in ws[1]]
+        assert "Issue Description" in header_values
+        
+        # Find Issue Description column index
+        issue_col_idx = header_values.index("Issue Description") + 1
+        
+        # Check that row 2 (index 0) has the combined issue description
+        issue_cell = ws.cell(row=2, column=issue_col_idx)
+        issue_text = issue_cell.value
+        assert issue_text is not None
+        assert "Product Type:" in issue_text
+        assert "Brand:" in issue_text
+        assert "|" in issue_text  # Separator between issues
+        
+        wb.close()
+
+    def test_no_issue_description_when_no_flags(self, tmp_path):
+        """Test that Issue Description column is NOT added when there are no flagged cells."""
+        df = _make_test_df(rows=2)
+        wb = _save_and_load(tmp_path, df=df, flagged={})
+        ws = wb["SKU Data"]
+
+        # Check that Issue Description column does NOT exist
+        header_values = [cell.value for cell in ws[1]]
+        assert "Issue Description" not in header_values
+        
         wb.close()
 
 

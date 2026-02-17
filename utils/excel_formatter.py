@@ -64,7 +64,7 @@ def format_and_save(
     dataframe: pd.DataFrame,
     quality_report: QualityReport,
     source_files_info: list[dict],
-    flagged_cells: set[tuple[int, str]],
+    flagged_cells: dict[tuple[int, str], str],
     output_path: Path,
 ) -> Path:
     """
@@ -75,8 +75,8 @@ def format_and_save(
         quality_report: QualityReport from quality_checker.
         source_files_info: List of dicts with keys: filename, retailer,
                           city, store_format, row_count, date_processed.
-        flagged_cells: Set of (row_index, column_name) tuples to highlight
-                      in yellow on the SKU Data sheet.
+        flagged_cells: Dict mapping (row_index, column_name) to reason string
+                      for cells to highlight in yellow on the SKU Data sheet.
         output_path: Path where the .xlsx file should be saved.
 
     Returns:
@@ -114,11 +114,12 @@ def format_and_save(
 def _write_sku_data_sheet(
     worksheet: openpyxl.worksheet.worksheet.Worksheet,
     dataframe: pd.DataFrame,
-    flagged_cells: set[tuple[int, str]],
+    flagged_cells: dict[tuple[int, str], str],
 ) -> None:
     """
     Write the main SKU data sheet with headers, data, formatting, and
-    flagged-cell highlighting.
+    flagged-cell highlighting. Adds an Issue Description column if there
+    are any flagged cells.
     """
     # Determine which master columns exist in the DataFrame
     columns_to_write = [c for c in MASTER_COLUMNS if c in dataframe.columns]
@@ -152,6 +153,36 @@ def _write_sku_data_sheet(
             if (df_idx, col_name) in flagged_cells:
                 cell.fill = _YELLOW_FILL
 
+    # Add Issue Description column if there are flagged cells
+    if flagged_cells:
+        issue_col_idx = len(columns_to_write) + 1
+        
+        # Write header
+        header_cell = worksheet.cell(row=1, column=issue_col_idx, value="Issue Description")
+        header_cell.fill = _HEADER_FILL
+        header_cell.font = _HEADER_FONT
+        header_cell.alignment = Alignment(horizontal="center")
+        
+        # Write issue descriptions for each row
+        for row_offset, df_idx in enumerate(dataframe.index):
+            excel_row = row_offset + 2
+            
+            # Collect all flagged cells for this row
+            row_issues = []
+            for (flagged_row_idx, flagged_col), reason in flagged_cells.items():
+                if flagged_row_idx == df_idx:
+                    row_issues.append(f"{flagged_col}: {reason}")
+            
+            # Write the combined issue description
+            if row_issues:
+                issue_text = " | ".join(row_issues)
+                cell = worksheet.cell(row=excel_row, column=issue_col_idx, value=issue_text)
+                cell.font = _NORMAL_FONT
+        
+        # Set column width for Issue Description column
+        issue_col_letter = get_column_letter(issue_col_idx)
+        worksheet.column_dimensions[issue_col_letter].width = 60
+
     # Apply number formats
     _apply_number_formats(worksheet, columns_to_write, len(dataframe))
 
@@ -160,7 +191,9 @@ def _write_sku_data_sheet(
 
     # Enable auto-filter on the header row
     if columns_to_write:
-        last_col_letter = get_column_letter(len(columns_to_write))
+        # Include Issue Description column in auto-filter if it exists
+        total_columns = len(columns_to_write) + (1 if flagged_cells else 0)
+        last_col_letter = get_column_letter(total_columns)
         last_row = len(dataframe) + 1  # header + data rows
         worksheet.auto_filter.ref = f"A1:{last_col_letter}{last_row}"
 
