@@ -465,6 +465,8 @@ if (
                     dataframe["Product Name"] = None
                 if "Flavor" not in dataframe.columns:
                     dataframe["Flavor"] = None
+                if "Juice Extraction Method" not in dataframe.columns:
+                    dataframe["Juice Extraction Method"] = None
 
                 # ── Step 4: Normalize categorical values ──────────
                 with status_container.container():

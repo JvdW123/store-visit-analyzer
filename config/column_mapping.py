@@ -23,6 +23,8 @@ EXACT_MATCHES: dict[str, str] = {
     "flavor": "Product Name",
     "facings": "Facings",
     "packaging size (ml)": "Packaging Size (ml)",
+    "juice extraction method": "Juice Extraction Method",
+    "extraction method": "Juice Extraction Method",
     "processing method": "Processing Method",
     "hpp treatment": "HPP Treatment",
     "packaging type": "Packaging Type",
