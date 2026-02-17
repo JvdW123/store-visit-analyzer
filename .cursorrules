@@ -8,6 +8,19 @@ Claude Sonnet API handles the remaining ~10-20% requiring semantic judgment.
 The user is a strategy consultant learning vibe coding — NOT a traditional developer.
 Code must be readable and well-documented so the user can understand and evaluate it.
 
+## LLM Usage in the Tool
+The tool itself calls the Claude API for data cleaning. The rules are:
+- Model: Claude Sonnet (claude-sonnet-4-20250514) — hardcoded, no user choice
+- One API call per file — all ambiguous items batched together
+- LLM is ONLY used for: unknown categorical values, Shelf Location normalization,
+  Juice Extraction Method inference, Processing Method edge cases, HPP Treatment
+  edge cases, and typo confirmation
+- Everything else is deterministic code — NO LLM for: file reading, structure
+  detection, filename parsing, known normalizations, numeric conversion, price
+  calculations, deduplication, or quality reporting
+- If no API key is provided, the tool still works — ambiguous items are flagged
+  instead of resolved
+
 ## Documentation — Read Before Coding
 - `docs/PRD.md` — objectives, scope, user stories, UI flow
 - `docs/SCHEMA.md` — master column definitions, data types, valid values
