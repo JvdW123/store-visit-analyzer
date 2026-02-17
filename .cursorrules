@@ -1,0 +1,130 @@
+# Store Visit Analyzer — Cursor Rules
+
+## Project Context
+Streamlit tool that consolidates messy supermarket shelf analysis Excel files into one
+clean master dataset. Hybrid architecture: deterministic code handles ~80-90% of cleaning,
+Claude Sonnet API handles the remaining ~10-20% requiring semantic judgment.
+
+The user is a strategy consultant learning vibe coding — NOT a traditional developer.
+Code must be readable and well-documented so the user can understand and evaluate it.
+
+## Documentation — Read Before Coding
+- `docs/PRD.md` — objectives, scope, user stories, UI flow
+- `docs/SCHEMA.md` — master column definitions, data types, valid values
+- `docs/RULES.md` — normalization rules, deterministic vs LLM decision matrix
+- `docs/ARCHITECTURE.md` — file structure, module responsibilities, data flow
+- `docs/FILENAME_CONFIG.md` — retailer/city/format parsing configuration
+- `docs/TESTING.md` — testing strategy, ground truth approach
+
+**Always read the relevant doc(s) before building or modifying a module.**
+For example, before working on normalizer.py, read RULES.md and SCHEMA.md.
+
+## Code Style
+
+### Readability First
+- Use descriptive variable names: `raw_dataframe` not `df`, `shelf_level_value` not `val`
+- Every function gets a docstring explaining: what it does, what it takes, what it returns
+- Add inline comments for non-obvious logic — explain the WHY, not the WHAT
+- Keep functions under 50 lines. If longer, split into well-named helper functions.
+
+### Python Conventions
+- Python 3.11+
+- Type hints on all function parameters and return values
+- Use `pathlib.Path` for file paths, not string concatenation
+- Use `logging` module (per-module loggers), never `print()` for status messages
+- Use f-strings for string formatting
+- Import order: stdlib → third-party → local (separated by blank lines)
+
+### Example of Good Code for This Project
+```python
+import logging
+from pathlib import Path
+from typing import Optional
+
+import pandas as pd
+
+from config.normalization_rules import PRODUCT_TYPE_MAP
+
+logger = logging.getLogger(__name__)
+
+
+def normalize_product_type(raw_value: str) -> Optional[str]:
+    """
+    Normalize a raw 'Segment' value to a standard Product Type.
+
+    Looks up the value in the known normalization table. Returns None
+    if the value is not recognized (caller should flag for LLM review).
+
+    Args:
+        raw_value: The raw segment value from the Excel file.
+
+    Returns:
+        Normalized product type string, or None if not recognized.
+    """
+    if pd.isna(raw_value) or str(raw_value).strip() == "":
+        return None
+
+    cleaned = str(raw_value).strip().lower()
+    normalized = PRODUCT_TYPE_MAP.get(cleaned)
+
+    if normalized is None:
+        logger.info(f"Unrecognized Product Type value: '{raw_value}' — flagging for review")
+
+    return normalized
+```
+
+## Configuration-Driven Development
+- **All normalization rules, column mappings, and known values live in `config/`**
+- Processing code imports from config — NEVER hardcodes values
+- To add a new retailer or normalization rule → edit the config dict
+- To add a new country → edit config, not processing logic
+
+## Error Handling
+- Wrap file I/O in try/except with clear, descriptive error messages
+- Never silently swallow exceptions — always log them
+- Functions that can partially succeed return BOTH results and errors:
+  ```python
+  def process_file(path: Path) -> tuple[pd.DataFrame, list[str]]:
+      """Returns (cleaned_data, list_of_errors)"""
+  ```
+- If a single row can't be processed → skip it and log it. Never crash the whole file.
+- If an entire file can't be processed → log it, report to user, continue with other files.
+
+## Data Rules
+- All data flows through pandas DataFrames
+- **Blank (None/NaN) means "we don't know"** — NEVER use the string "Unknown"
+- The LLM is optional — every processing module MUST produce output without it
+  (flagging ambiguous items instead of resolving them)
+- Always recalculate derived values (Price per Liter) — never trust raw file values
+- Numeric columns must be numeric types, not strings stored as text
+- Strip whitespace from all string values before processing
+
+## Module Independence
+- Each module in `processing/` takes a DataFrame in and returns a DataFrame out
+- Modules can be tested in isolation without running the full pipeline
+- Module dependencies flow in one direction (see data flow in ARCHITECTURE.md)
+- New processing steps → new files, not additions to existing files
+
+## Streamlit UI Rules
+- `app.py` handles ONLY the UI layout and user interactions
+- **No business logic in app.py** — it calls processing modules and displays results
+- Use `st.spinner()` for long operations
+- Use `st.progress()` for file-by-file processing
+- Cache expensive operations with `@st.cache_data` where appropriate
+
+## Testing
+- Write test functions for each processing module
+- Test with edge cases: empty files, files with only merged cells, missing columns
+- After each phase: run `python -m pytest tests/ -v`
+- After Phase 4+: run `python tests/compare_ground_truth.py` for accuracy check
+- See `docs/TESTING.md` for the full testing strategy
+
+## Don'ts
+- Don't put business logic in app.py — UI only calls processing modules
+- Don't create god functions — break complex logic into small, testable pieces
+- Don't install packages not in requirements.txt without flagging it
+- Don't hardcode file paths, column names, or normalization values
+- Don't assume Excel file structure — always detect dynamically
+- Don't use "Unknown" as a value — use None/blank
+- Don't trust raw calculated values (Price per Liter) — always recalculate
+- Don't make multiple LLM API calls per file — batch all flagged items into one call
