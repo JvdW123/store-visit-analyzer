@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
-from config.normalization_rules import FLAVOR_MAP
+from config.normalization_rules import FLAVOR_MAP, FLAVOR_WORD_MAP
 from config.schema import VALID_VALUES
 from processing.normalizer import FlaggedItem
 
@@ -36,7 +36,13 @@ logger = logging.getLogger(__name__)
 _MODEL_ID = "claude-sonnet-4-20250514"
 
 # Maximum flagged items per API call.  Beyond this, batch into multiple calls.
-_MAX_ITEMS_PER_BATCH = 200
+# Keep batches small so LLM output fits comfortably within max_tokens.
+_MAX_ITEMS_PER_BATCH = 50
+
+# Maximum output tokens for the LLM response.  Each resolved item produces
+# ~80-120 output tokens, so 50 items need ~4000-6000 tokens.  16384 gives
+# ample headroom even for verbose reasoning.
+_MAX_OUTPUT_TOKENS = 16384
 
 _PROMPT_TEMPLATE = """You are a data cleaning assistant for supermarket shelf analysis data.
 
@@ -66,6 +72,15 @@ COLUMN-SPECIFIC INSTRUCTIONS:
   may contain processing terminology (e.g. "Freshly Squeezed", "Cold Pressed").
   Claims mentioning "not from concentrate" indicate "Squeezed" (NOT "From
   Concentrate"). Valid values: "Cold Pressed", "Squeezed", "From Concentrate".
+
+  INFERENCE HEURISTIC (use when no explicit indicators exist):
+  - If Processing Method is "Pasteurized" and no cold-press or squeeze
+    keywords are present, infer from brand positioning:
+    - Premium/fresh brands (e.g. Tropicana, Innocent, Naked) → likely "Squeezed"
+    - Budget brands or private label products → likely "From Concentrate"
+  - If the product is labelled "pure juice" without further context, it is
+    likely "Squeezed" or "From Concentrate" — use brand to disambiguate.
+  - Only return blank if you truly cannot determine with reasonable confidence.
 - Flavor: Extract ALL flavor/fruit/ingredient components from the Product Name.
   Include every flavor-relevant ingredient mentioned, joined with " & ".
   Always use " & " as the separator (not "/", "and", or comma-only).
@@ -87,6 +102,10 @@ COLUMN-SPECIFIC INSTRUCTIONS:
   "Spicy Ginger" → "Ginger", "Sweet Mango" → "Mango".
   BUT keep varietal/type modifiers: "Blood Orange" → "Blood Orange",
   "Pink Grapefruit" → "Pink Grapefruit".
+
+  ORDERING: Preserve the order of flavors as they appear in the Product Name.
+  Do not alphabetize or reorder. The product name typically lists the primary
+  flavor first.
 
   If the product name itself IS a flavor description (e.g. Berry Energise,
   Green Machine), use it as the Flavor.
@@ -137,6 +156,8 @@ class LLMCleaningResult:
     api_cost_estimate: float = 0.0
     input_tokens: int = 0
     output_tokens: int = 0
+    failed_batches: int = 0
+    total_batches: int = 0
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -151,9 +172,10 @@ def clean_with_llm(
     """
     Resolve flagged items using Claude Sonnet.
 
-    Batches all flagged items into one API call (or multiple if > 200 items).
+    Batches all flagged items into API calls of up to 50 items each.
     Parses the JSON response, validates returned values against VALID_VALUES,
-    and applies valid decisions to the DataFrame.
+    and applies valid decisions to the DataFrame.  If a batch fails to parse
+    (e.g. truncated response), it is split in half and retried.
 
     Args:
         dataframe: The partially-cleaned DataFrame.
@@ -183,10 +205,19 @@ def clean_with_llm(
     total_cost: float = 0.0
     total_input_tokens: int = 0
     total_output_tokens: int = 0
+    failed_batch_count: int = 0
 
-    for batch_idx, batch in enumerate(batches):
+    # Use a queue so failed batches can be re-split and retried
+    batch_queue: list[list[FlaggedItem]] = list(batches)
+    total_batch_count = len(batch_queue)
+    processed_idx = 0
+
+    while batch_queue:
+        batch = batch_queue.pop(0)
+        processed_idx += 1
+
         logger.info(
-            f"Processing LLM batch {batch_idx + 1}/{len(batches)} "
+            f"Processing LLM batch {processed_idx}/{total_batch_count} "
             f"({len(batch)} items)"
         )
 
@@ -202,6 +233,7 @@ def clean_with_llm(
                 response_text, cost, input_tokens, output_tokens = _call_sonnet_api(prompt, api_key)
             except Exception as retry_exc:
                 logger.error(f"LLM API retry also failed: {retry_exc}")
+                failed_batch_count += 1
                 continue
 
         total_cost += cost
@@ -210,7 +242,24 @@ def clean_with_llm(
 
         llm_decisions = _parse_llm_response(response_text)
         if llm_decisions is None:
-            logger.error("Failed to parse LLM response — skipping batch")
+            # If batch is large enough, split in half and retry both halves
+            _MIN_SPLIT_SIZE = 10
+            if len(batch) > _MIN_SPLIT_SIZE:
+                mid = len(batch) // 2
+                logger.warning(
+                    f"Parse failed for batch of {len(batch)} items — "
+                    f"splitting into two sub-batches of {mid} and "
+                    f"{len(batch) - mid} items for retry"
+                )
+                batch_queue.insert(0, batch[mid:])
+                batch_queue.insert(0, batch[:mid])
+                total_batch_count += 1  # one batch became two (net +1)
+            else:
+                logger.error(
+                    f"Parse failed for small batch of {len(batch)} items — "
+                    f"skipping (cannot split further)"
+                )
+                failed_batch_count += 1
             continue
 
         resolved, rejected = _validate_and_apply(result_df, llm_decisions)
@@ -219,7 +268,8 @@ def clean_with_llm(
 
     logger.info(
         f"LLM cleaning complete: {len(all_resolved)} resolved, "
-        f"{len(all_rejected)} rejected, estimated cost: ${total_cost:.4f}"
+        f"{len(all_rejected)} rejected, {failed_batch_count} failed batches, "
+        f"estimated cost: ${total_cost:.4f}"
     )
 
     return LLMCleaningResult(
@@ -230,6 +280,8 @@ def clean_with_llm(
         api_cost_estimate=total_cost,
         input_tokens=total_input_tokens,
         output_tokens=total_output_tokens,
+        failed_batches=failed_batch_count,
+        total_batches=total_batch_count,
     )
 
 
@@ -289,7 +341,7 @@ def _call_sonnet_api(prompt: str, api_key: str) -> tuple[str, float, int, int]:
 
     message = client.messages.create(
         model=_MODEL_ID,
-        max_tokens=4096,
+        max_tokens=_MAX_OUTPUT_TOKENS,
         messages=[{"role": "user", "content": prompt}],
     )
 
@@ -337,7 +389,20 @@ def _parse_llm_response(response_text: str) -> list[dict] | None:
     end_idx = json_text.rfind("]")
 
     if start_idx == -1 or end_idx == -1:
-        logger.error("No JSON array found in LLM response")
+        # Distinguish truncation from a completely wrong response format
+        if start_idx != -1 and end_idx == -1:
+            logger.error(
+                "LLM response appears truncated — found '[' but no closing ']'. "
+                "The output likely exceeded max_tokens. "
+                f"Response length: {len(response_text)} chars, "
+                f"last 300 chars: ...{response_text[-300:]}"
+            )
+        else:
+            logger.error(
+                "No JSON array found in LLM response. "
+                f"Response length: {len(response_text)} chars, "
+                f"first 300 chars: {response_text[:300]}..."
+            )
         return None
 
     json_text = json_text[start_idx : end_idx + 1]
@@ -348,7 +413,11 @@ def _parse_llm_response(response_text: str) -> list[dict] | None:
     try:
         decisions = json.loads(json_text)
     except json.JSONDecodeError as exc:
-        logger.error(f"Failed to parse LLM JSON response: {exc}")
+        logger.error(
+            f"Failed to parse LLM JSON response: {exc}. "
+            f"Response length: {len(response_text)} chars, "
+            f"last 300 chars: ...{response_text[-300:]}"
+        )
         return None
 
     if not isinstance(decisions, list):
@@ -481,6 +550,8 @@ def _normalize_flavor(value: str) -> str:
     1. Check FLAVOR_MAP for an exact (case-insensitive) replacement.
     2. If not found, apply general separator normalization:
        replace "/" with " & " (handling optional surrounding spaces).
+    3. Apply FLAVOR_WORD_MAP word-level replacements (case-insensitive
+       substring replacement for spelling standardization).
 
     Args:
         value: The raw Flavor string from the LLM.
@@ -494,12 +565,17 @@ def _normalize_flavor(value: str) -> str:
     stripped = value.strip()
     lookup_key = stripped.lower()
 
-    # Exact match in FLAVOR_MAP
+    # Step 1: Exact match in FLAVOR_MAP
     if lookup_key in FLAVOR_MAP:
         return FLAVOR_MAP[lookup_key]
 
-    # General separator normalization: " / " or "/" → " & "
+    # Step 2: General separator normalization: " / " or "/" → " & "
     normalized = re.sub(r"\s*/\s*", " & ", stripped)
+
+    # Step 3: Word-level replacements from FLAVOR_WORD_MAP
+    for raw_word, canonical in FLAVOR_WORD_MAP.items():
+        pattern = re.compile(re.escape(raw_word), re.IGNORECASE)
+        normalized = pattern.sub(canonical, normalized)
 
     return normalized
 

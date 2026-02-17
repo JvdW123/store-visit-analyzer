@@ -333,3 +333,142 @@ class TestMockedAPICall:
         assert result.dataframe.at[0, "Product Type"] == "Other"
         # Row 1 Shelf Location unchanged because "The Fridge" was rejected
         assert result.dataframe.at[1, "Shelf Location"] == "Back aisle"
+
+    @patch("processing.llm_cleaner._call_sonnet_api")
+    def test_result_tracks_batch_counts(self, mock_api):
+        """LLMCleaningResult includes total_batches and failed_batches."""
+        mock_response = json.dumps([{
+            "row_index": 0,
+            "column": "Product Type",
+            "original_value": "Health Juice",
+            "normalized_value": "Other",
+            "reasoning": "ok",
+        }])
+        mock_api.return_value = (mock_response, 0.005, 100, 50)
+
+        df = _make_df_for_llm()
+        flagged = [_make_flagged_item(row_index=0)]
+
+        result = clean_with_llm(df, flagged, api_key="sk-test")
+
+        assert result.total_batches >= 1
+        assert result.failed_batches == 0
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Truncation detection in parsing
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestTruncatedResponse:
+    def test_truncated_json_missing_closing_bracket(self):
+        """Simulate output truncation: JSON starts with '[' but is cut off."""
+        truncated = (
+            '[{"row_index": 0, "column": "Product Type", '
+            '"original_value": "x", "normalized_value": "Other", '
+            '"reasoning": "test"}, {"row_index": 1, "column": "Flavor"'
+        )
+        result = _parse_llm_response(truncated)
+        assert result is None
+
+    def test_truncated_inside_code_fence(self):
+        """Truncation inside a markdown code fence — no closing ```."""
+        truncated = (
+            '```json\n[{"row_index": 0, "column": "Product Type", '
+            '"original_value": "x", "normalized_value": "Other", '
+            '"reasoning": "test"}, {"row_index": 1'
+        )
+        result = _parse_llm_response(truncated)
+        assert result is None
+
+    def test_preamble_only_no_json_at_all(self):
+        """LLM only produced preamble text, no JSON."""
+        response = "I'll analyze these items and provide normalized values. Let me go through each one..."
+        result = _parse_llm_response(response)
+        assert result is None
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Retry-with-split on parse failure
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestRetryWithSplit:
+    @patch("processing.llm_cleaner._call_sonnet_api")
+    def test_failed_large_batch_is_split_and_retried(self, mock_api):
+        """When parsing fails for a large batch, it splits and retries."""
+        df = pd.DataFrame({
+            "Product Type": ["Unknown"] * 20,
+            "Brand": ["TestBrand"] * 20,
+            "Flavor": [""] * 20,
+            "Claims": [""] * 20,
+            "Notes": [None] * 20,
+        })
+        flagged = [
+            _make_flagged_item(row_index=i) for i in range(20)
+        ]
+
+        # First call returns truncated response; retries return valid JSON
+        valid_items = [
+            {
+                "row_index": i,
+                "column": "Product Type",
+                "original_value": "Unknown",
+                "normalized_value": "Other",
+                "reasoning": "test",
+            }
+            for i in range(10)
+        ]
+        truncated_response = '[{"row_index": 0, "column": "Product Type", "trunca'
+        valid_first_half = json.dumps(valid_items[:10])
+        valid_second_half = json.dumps(valid_items[:10])
+
+        mock_api.side_effect = [
+            (truncated_response, 0.01, 200, 100),   # first call: truncated
+            (valid_first_half, 0.005, 100, 50),      # retry first half
+            (valid_second_half, 0.005, 100, 50),     # retry second half
+        ]
+
+        result = clean_with_llm(df, flagged, api_key="sk-test")
+
+        assert result.failed_batches == 0
+        assert len(result.resolved_items) > 0
+        assert mock_api.call_count == 3
+
+    @patch("processing.llm_cleaner._call_sonnet_api")
+    def test_small_batch_failure_not_split(self, mock_api):
+        """Batches with <= 10 items are not split further on failure."""
+        df = pd.DataFrame({
+            "Product Type": ["Unknown"] * 5,
+            "Brand": ["TestBrand"] * 5,
+            "Flavor": [""] * 5,
+            "Claims": [""] * 5,
+            "Notes": [None] * 5,
+        })
+        flagged = [_make_flagged_item(row_index=i) for i in range(5)]
+
+        truncated_response = '[{"truncated'
+        mock_api.return_value = (truncated_response, 0.01, 200, 100)
+
+        result = clean_with_llm(df, flagged, api_key="sk-test")
+
+        assert result.failed_batches == 1
+        assert len(result.resolved_items) == 0
+        assert mock_api.call_count == 1
+
+    @patch("processing.llm_cleaner._call_sonnet_api")
+    def test_failed_batches_count_in_result(self, mock_api):
+        """failed_batches count reflects total unrecoverable failures."""
+        df = pd.DataFrame({
+            "Product Type": ["Unknown"] * 5,
+            "Brand": ["TestBrand"] * 5,
+            "Flavor": [""] * 5,
+            "Claims": [""] * 5,
+            "Notes": [None] * 5,
+        })
+        flagged = [_make_flagged_item(row_index=i) for i in range(5)]
+
+        mock_api.return_value = ("Not JSON at all", 0.01, 200, 100)
+
+        result = clean_with_llm(df, flagged, api_key="sk-test")
+
+        assert result.failed_batches == 1
+        assert result.total_batches >= 1

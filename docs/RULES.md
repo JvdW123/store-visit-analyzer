@@ -102,7 +102,10 @@ All matching is case-insensitive. Leading/trailing whitespace is stripped before
 
 | Raw Value | Normalized |
 |-----------|-----------|
-| "Pasteurized", "pasteurised", "Pasteurised", "Flash pasteurised" | "Pasteurized" |
+| "Pasteurized", "pasteurised", "Pasteurised", "Flash pasteurised", "Flash pasteurized" | "Pasteurized" |
+| "Gently pasteurised", "Gently pasteurized" | "Pasteurized" |
+| "Heat treated", "Heat-treated" | "Pasteurized" |
+| "Thermally treated", "Thermally pasteurised", "Thermally pasteurized" | "Pasteurized" |
 | "Cold-pressed", "Cold pressed", "Pressed" | blank (informs Juice Extraction Method instead) |
 | "unpasteurised", "Unpasteurised", "Not pasteurised" | blank (removed as Processing Method value) |
 | "Freshly Squeezed", "freshly squeezed" | blank (informs Juice Extraction Method instead) |
@@ -156,7 +159,10 @@ All matching is case-insensitive. Leading/trailing whitespace is stripped before
 **LLM-normalized.** Only exact matches to valid categories are handled deterministically:
 - "Chilled Section" → "Chilled Section"
 - "Chilled Drinks Section" → "Chilled Section"
+- "Chilled Section - Fridge 1" through "Chilled Section - Fridge 6" → "Chilled Section"
+- "Main Beverage Aisle / Juice Section" → "Chilled Section"
 - "To-Go Section" → "To-Go Section"
+- "To-Go Section - Main" → "To-Go Section"
 - "To-Go Section — Shots" → "To-Go Section — Shots"
 - "Meal Deal Section" → "Meal Deal Section"
 
@@ -180,6 +186,8 @@ Deterministic rules are applied in order; first match wins per row:
 
 **LLM prompt context for Juice Extraction Method:** Brand, Sub-brand, Product Name, Claims, Notes, Processing Method, HPP Treatment. The Sub-brand may contain processing terminology (e.g. "Freshly Squeezed", "Cold Pressed").
 
+**LLM inference heuristic (when no explicit indicators exist):** If Processing Method is "Pasteurized" and no cold-press or squeeze keywords are present, infer from brand positioning: premium/fresh brands (e.g. Tropicana, Innocent, Naked) → likely "Squeezed"; budget brands or private label → likely "From Concentrate". If the product is labelled "pure juice" without further context, use brand to disambiguate between "Squeezed" and "From Concentrate".
+
 ### Flavor — LLM Extraction from Product Name
 The raw Excel column "Flavor" actually contains Product Name data (the text on the label/logo). After column mapping remaps raw "Flavor" → "Product Name", the Flavor column is populated by LLM inference.
 
@@ -197,9 +205,12 @@ For every row with a Product Name but no Flavor, the LLM is asked to extract ALL
 
 **Flavor vs. functional ingredient rule:** Include fruits, vegetables, herbs, spices, and culinary ingredients that contribute to taste (Orange, Ginger, Turmeric, Matcha, Mint, etc.). Exclude functional/supplement ingredients that don't describe a taste (Probiotics, Lion's Mane, Collagen, Protein, Vitamins, Ashwagandha, CBD, Spirulina).
 
+**Flavor ordering:** Preserve the order of flavors as they appear in the Product Name. Do not alphabetize or reorder — the product name typically lists the primary flavor first.
+
 **Conjunction standardization:** Always use " & " as separator. After LLM extraction, a post-normalization step:
 1. Checks `FLAVOR_MAP` for exact-match replacements (e.g. "Strawberry Banana" → "Strawberry & Banana")
 2. Normalizes "/" separators to " & " (e.g. "Ginger/Turmeric" → "Ginger & Turmeric")
+3. Applies `FLAVOR_WORD_MAP` word-level replacements for spelling standardization (e.g. "Passionfruit" → "Passion Fruit", "Passion-fruit" → "Passion Fruit"). These are case-insensitive substring replacements that work inside compound flavors (e.g. "Apple & Passionfruit" → "Apple & Passion Fruit").
 
 If no clear flavor can be determined, Flavor is left blank.
 
@@ -244,8 +255,11 @@ If either Price or Packaging Size is missing → leave blank.
 ## LLM Call Specification
 
 **Model:** Claude Sonnet (claude-sonnet-4-20250514)
-**Calls per file:** 1 (all ambiguous items batched)
-**Estimated cost per file:** ~$0.005-0.01
+**Max output tokens:** 16384 (to avoid truncation of large JSON responses)
+**Batch size:** 50 items per API call (larger sets are split into multiple calls)
+**Retry strategy:** If a batch response fails to parse (e.g. truncated), it is split
+in half and both halves are retried. Batches of 10 or fewer items are not split further.
+**Estimated cost per file:** ~$0.005-0.02 (depends on number of flagged items)
 
 **Prompt template:**
 ```
@@ -275,7 +289,9 @@ COLUMN-SPECIFIC INSTRUCTIONS:
 - Juice Extraction Method: consider the full row context — Brand, Sub-brand,
   Product Name, Claims, Notes, Processing Method, HPP Treatment. The Sub-brand
   may contain processing terminology. Claims mentioning "not from concentrate"
-  indicate "Squeezed" (NOT "From Concentrate").
+  indicate "Squeezed" (NOT "From Concentrate"). When no explicit indicators
+  exist, infer from brand positioning: premium brands likely "Squeezed",
+  budget/private label likely "From Concentrate".
 - Flavor: Extract ALL flavor components from Product Name, joined with " & ".
   Include taste ingredients (fruits, herbs, spices). Exclude functional/supplement
   ingredients that don't describe taste (Probiotics, Lion's Mane, Collagen, etc.).

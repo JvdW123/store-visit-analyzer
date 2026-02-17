@@ -103,6 +103,8 @@ def _init_session_state() -> None:
         "source_files_info": [],
         "llm_resolved_count": 0,
         "llm_skipped": False,
+        "llm_failed_batches": 0,
+        "llm_total_batches": 0,
         "total_llm_cost": 0.0,
         "total_input_tokens": 0,
         "total_output_tokens": 0,
@@ -514,10 +516,12 @@ if (
                     llm_resolved_count += len(llm_result.resolved_items)
                     llm_skipped = llm_result.skipped
                     
-                    # Accumulate token usage and cost
+                    # Accumulate token usage, cost, and batch stats
                     st.session_state["total_llm_cost"] += llm_result.api_cost_estimate
                     st.session_state["total_input_tokens"] += llm_result.input_tokens
                     st.session_state["total_output_tokens"] += llm_result.output_tokens
+                    st.session_state["llm_failed_batches"] += llm_result.failed_batches
+                    st.session_state["llm_total_batches"] += llm_result.total_batches
 
                     # Remove resolved items from the flagged list
                     resolved_keys = {
@@ -748,6 +752,15 @@ if (
             "LLM Cost",
             f"${total_cost:.3f}",
             delta=f"{total_in:,} in / {total_out:,} out tokens"
+        )
+
+    llm_failed = st.session_state.get("llm_failed_batches", 0)
+    llm_total = st.session_state.get("llm_total_batches", 0)
+    if llm_failed > 0:
+        st.warning(
+            f"{llm_failed} of {llm_total} LLM batches failed to parse. "
+            f"Some items may not have been normalized by the LLM. "
+            f"Check the console log for details."
         )
 
     if llm_skipped and not api_key:

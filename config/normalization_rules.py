@@ -48,6 +48,14 @@ PROCESSING_METHOD_MAP: dict[str, str] = {
     "pasteurized": "Pasteurized",
     "pasteurised": "Pasteurized",
     "flash pasteurised": "Pasteurized",
+    "flash pasteurized": "Pasteurized",
+    "gently pasteurised": "Pasteurized",
+    "gently pasteurized": "Pasteurized",
+    "heat treated": "Pasteurized",
+    "heat-treated": "Pasteurized",
+    "thermally treated": "Pasteurized",
+    "thermally pasteurised": "Pasteurized",
+    "thermally pasteurized": "Pasteurized",
     "cold-pressed": "",       # blank — informs Juice Extraction Method, not Processing Method
     "cold pressed": "",       # blank — informs Juice Extraction Method, not Processing Method
     "pressed": "",            # blank — informs Juice Extraction Method, not Processing Method
@@ -130,7 +138,15 @@ STOCK_STATUS_MAP: dict[str, str] = {
 SHELF_LOCATION_MAP: dict[str, str] = {
     "chilled section": "Chilled Section",
     "chilled drinks section": "Chilled Section",
+    "chilled section - fridge 1": "Chilled Section",
+    "chilled section - fridge 2": "Chilled Section",
+    "chilled section - fridge 3": "Chilled Section",
+    "chilled section - fridge 4": "Chilled Section",
+    "chilled section - fridge 5": "Chilled Section",
+    "chilled section - fridge 6": "Chilled Section",
+    "main beverage aisle / juice section": "Chilled Section",
     "to-go section": "To-Go Section",
+    "to-go section - main": "To-Go Section",
     "to-go section — shots": "To-Go Section — Shots",
     "to-go section - shots": "To-Go Section — Shots",
     "meal deal section": "Meal Deal Section",
@@ -147,6 +163,18 @@ FLAVOR_MAP: dict[str, str] = {
     "strawberry banana": "Strawberry & Banana",
     "ginger/turmeric": "Ginger & Turmeric",
     "ginger / turmeric": "Ginger & Turmeric",
+}
+
+# ---------------------------------------------------------------------------
+# Flavor — Word-level replacements.
+# Applied as substring replacements (case-insensitive) AFTER exact-match
+# and separator normalization.  Catches spelling standardization inside
+# compound flavors (e.g. "Apple & Passionfruit" → "Apple & Passion Fruit").
+# Keys must be lowercase.  Replacements are applied in order.
+# ---------------------------------------------------------------------------
+FLAVOR_WORD_MAP: dict[str, str] = {
+    "passionfruit": "Passion Fruit",
+    "passion-fruit": "Passion Fruit",
 }
 
 # ---------------------------------------------------------------------------
