@@ -94,3 +94,46 @@ SUFFIXES_TO_STRIP: list[str] = [
 # Applied after extension removal but before other cleaning.
 # ---------------------------------------------------------------------------
 COPY_INDICATOR_PATTERN: re.Pattern = re.compile(r"\s*\(\d+\)\s*$")
+
+# ---------------------------------------------------------------------------
+# Country → retailer lists for the per-file metadata dropdowns.
+# Each country maps to a list of known retailers.  "Other" is always last
+# and triggers a free-text input in the UI.
+# ---------------------------------------------------------------------------
+COUNTRY_RETAILERS: dict[str, list[str]] = {
+    "United Kingdom": [
+        "Tesco", "Tesco Express", "Sainsbury's", "Asda", "Morrisons",
+        "Aldi", "Lidl", "Waitrose", "M&S", "Co-op", "Iceland", "Ocado",
+        "SPAR", "Other",
+    ],
+    "France": [
+        "E.Leclerc", "Carrefour", "Carrefour Market", "Carrefour City",
+        "Intermarché", "Système U", "Auchan", "Lidl", "Aldi", "Casino",
+        "Monoprix", "Franprix", "Picard", "Other",
+    ],
+    "Germany": [
+        "Edeka", "REWE", "Lidl", "Aldi Nord", "Aldi Süd", "Kaufland",
+        "Penny", "Netto", "dm", "Globus", "tegut", "SPAR", "Other",
+    ],
+    "Netherlands": [
+        "Albert Heijn", "Jumbo", "Lidl", "Aldi", "PLUS", "Dirk",
+        "DekaMarkt", "Hoogvliet", "SPAR", "Ekoplaza", "Other",
+    ],
+    "Spain": [
+        "Mercadona", "Carrefour", "Lidl", "Aldi", "Dia", "Eroski",
+        "Consum", "Alcampo", "El Corte Inglés", "Bon Preu", "Other",
+    ],
+}
+
+# ---------------------------------------------------------------------------
+# Store format options for the per-file metadata dropdown.
+# "Other" triggers a free-text input in the UI.
+# ---------------------------------------------------------------------------
+STORE_FORMATS: list[str] = [
+    "Hypermarket", "Supermarket", "Discount", "Convenience", "Other",
+]
+
+# ---------------------------------------------------------------------------
+# Supported countries — derived from COUNTRY_RETAILERS keys.
+# ---------------------------------------------------------------------------
+COUNTRIES: list[str] = list(COUNTRY_RETAILERS.keys())

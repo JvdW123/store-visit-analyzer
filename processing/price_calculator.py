@@ -28,6 +28,7 @@ COUNTRY_CURRENCY_MAP: dict[str, str] = {
     "France": "EUR",
     "Germany": "EUR",
     "Netherlands": "EUR",
+    "Spain": "EUR",
 }
 
 DEFAULT_EXCHANGE_RATES: dict[str, float] = {

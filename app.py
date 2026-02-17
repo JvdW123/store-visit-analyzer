@@ -2,9 +2,9 @@
 Streamlit entry point — Store Visit Analyzer UI.
 
 Wires together the full processing pipeline with a 7-step user flow:
-  1. Sidebar settings (API key, exchange rate, country)
+  1. Sidebar settings (exchange rate)
   2. File upload (raw Excel + optional existing master)
-  3. Editable filename metadata table + Confirm button
+  3. Per-file metadata form (Country, City, Retailer, Store Name, Format)
   4. Per-file processing with progress bar
   5. Merge + overlap resolution dialog
   6. Results display (summary metrics, data preview, quality report)
@@ -24,6 +24,7 @@ import pandas as pd
 import requests
 import streamlit as st
 
+from config.filename_config import COUNTRIES, COUNTRY_RETAILERS, STORE_FORMATS
 from processing.file_reader import read_excel_file
 from processing.filename_parser import parse_filename
 from processing.column_mapper import map_columns
@@ -117,48 +118,33 @@ _init_session_state()
 
 st.sidebar.title("⚙️ Settings")
 
-api_key = st.sidebar.text_input(
-    "Anthropic API Key (optional)",
-    type="password",
-    help="Provide a Claude API key to enable LLM-based cleaning of ambiguous items. "
-         "Without a key, the tool still works — ambiguous items are flagged for manual review.",
-)
+# API key from Streamlit secrets (not from a UI input field)
+api_key = st.secrets.get("ANTHROPIC_API_KEY", None)
+if api_key == "your-key-here":
+    api_key = None
 
 st.sidebar.divider()
 
-country = st.sidebar.selectbox(
-    "Country",
-    options=list(COUNTRY_CURRENCY_MAP.keys()),
-    index=0,
-    help="Determines the local currency for price conversion.",
-)
+# Exchange rate: GBP → EUR (the only non-trivial conversion).
+# EUR-country files use rate 1.0 automatically during processing.
+default_gbp_rate = _fetch_exchange_rate(base="GBP", target="EUR")
 
-# Derive currency so we can fetch the right exchange rate
-currency_code = COUNTRY_CURRENCY_MAP.get(country, "EUR")
-
-# Fetch exchange rate (only relevant when local currency is not EUR)
-if currency_code == "EUR":
-    default_rate = 1.0
-    rate_help = "Already in EUR — no conversion needed."
-else:
-    default_rate = _fetch_exchange_rate(base=currency_code, target="EUR")
-    rate_help = "Rate fetched from ECB. Edit to override."
-
-exchange_rate = st.sidebar.number_input(
-    f"Exchange Rate {currency_code} → EUR",
+exchange_rate_gbp_eur = st.sidebar.number_input(
+    "Exchange Rate GBP → EUR",
     min_value=0.01,
     max_value=100.0,
-    value=default_rate,
+    value=default_gbp_rate,
     step=0.01,
     format="%.4f",
-    help=rate_help,
+    help="Rate fetched from ECB. Edit to override.",
 )
 
 st.sidebar.divider()
 if not api_key:
     st.sidebar.info(
-        "No API key provided. The tool will still process files — "
-        "ambiguous items will be flagged instead of LLM-resolved."
+        "No API key configured. The tool will still process files — "
+        "ambiguous items will be flagged instead of LLM-resolved. "
+        "Set ANTHROPIC_API_KEY in .streamlit/secrets.toml to enable LLM cleaning."
     )
 
 
@@ -204,7 +190,7 @@ if raw_files != st.session_state.get("_prev_raw_files"):
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Section 2: Filename Metadata Table (editable)
+# Section 2: Per-File Metadata Form
 # ═══════════════════════════════════════════════════════════════════════════
 
 if raw_files:
@@ -215,56 +201,154 @@ if raw_files:
         "Edit any incorrect values before processing."
     )
 
-    # Parse filenames and build the metadata table
-    parsed_rows: list[dict] = []
+    # Parse filenames once for auto-fill defaults
+    parsed_results: list[dict] = []
     for uploaded_file in raw_files:
         parse_result = parse_filename(uploaded_file.name)
-        parsed_rows.append({
-            "File": uploaded_file.name,
-            "Retailer": parse_result.retailer or "",
-            "City": parse_result.city or "",
-            "Format": parse_result.store_format or "",
-            "Confidence": parse_result.confidence,
+        parsed_results.append({
+            "filename": uploaded_file.name,
+            "retailer": parse_result.retailer or "",
+            "city": parse_result.city or "",
+            "store_format": parse_result.store_format or "",
+            "confidence": parse_result.confidence,
         })
 
-    metadata_df = pd.DataFrame(parsed_rows)
+    # Column headers
+    hdr_cols = st.columns([2, 1, 1, 1.5, 1.5, 1])
+    hdr_cols[0].markdown("**File**")
+    hdr_cols[1].markdown("**Country**")
+    hdr_cols[2].markdown("**City**")
+    hdr_cols[3].markdown("**Retailer**")
+    hdr_cols[4].markdown("**Store Name**")
+    hdr_cols[5].markdown("**Store Format**")
 
-    # Show editable table — Confidence is read-only, others are editable
-    edited_metadata = st.data_editor(
-        metadata_df,
-        column_config={
-            "File": st.column_config.TextColumn("File", disabled=True),
-            "Retailer": st.column_config.TextColumn("Retailer"),
-            "City": st.column_config.TextColumn("City"),
-            "Format": st.column_config.SelectboxColumn(
-                "Format",
-                options=["", "Small", "Medium", "Large"],
-            ),
-            "Confidence": st.column_config.ProgressColumn(
-                "Confidence",
-                min_value=0,
-                max_value=100,
-                format="%d%%",
-            ),
-        },
-        use_container_width=True,
-        hide_index=True,
-        num_rows="fixed",
-    )
+    low_confidence_count = 0
+
+    for idx, parsed in enumerate(parsed_results):
+        row_cols = st.columns([2, 1, 1, 1.5, 1.5, 1])
+
+        # ── Filename (read-only) ─────────────────────────────────
+        row_cols[0].text(parsed["filename"])
+        if parsed["confidence"] < 80:
+            low_confidence_count += 1
+
+        # ── Country dropdown ─────────────────────────────────────
+        default_country_idx = 0  # "United Kingdom"
+        file_country = row_cols[1].selectbox(
+            "Country",
+            options=COUNTRIES,
+            index=default_country_idx,
+            key=f"meta_{idx}_country",
+            label_visibility="collapsed",
+        )
+
+        # ── City (free text, auto-filled from parser) ────────────
+        file_city = row_cols[2].text_input(
+            "City",
+            value=parsed["city"],
+            key=f"meta_{idx}_city",
+            label_visibility="collapsed",
+        )
+
+        # ── Retailer dropdown (country-dependent) ────────────────
+        retailer_options = COUNTRY_RETAILERS.get(file_country, [])
+
+        # Try to match the auto-parsed retailer to a dropdown option
+        parsed_retailer = parsed["retailer"]
+        default_retailer_idx = 0
+        if parsed_retailer:
+            try:
+                default_retailer_idx = retailer_options.index(parsed_retailer)
+            except ValueError:
+                default_retailer_idx = 0
+
+        file_retailer = row_cols[3].selectbox(
+            "Retailer",
+            options=retailer_options,
+            index=default_retailer_idx,
+            key=f"meta_{idx}_retailer",
+            label_visibility="collapsed",
+        )
+
+        # If "Other" selected, show custom retailer text input
+        if file_retailer == "Other":
+            file_retailer = st.text_input(
+                "Custom Retailer Name",
+                value="",
+                key=f"meta_{idx}_retailer_custom",
+            )
+
+        # ── Store Name (free text, auto-filled) ──────────────────
+        default_store_name = (
+            f"{file_retailer} {file_city}"
+            if file_retailer and file_city
+            else ""
+        )
+        file_store_name = row_cols[4].text_input(
+            "Store Name",
+            value=default_store_name,
+            key=f"meta_{idx}_store_name",
+            label_visibility="collapsed",
+        )
+
+        # ── Store Format dropdown ────────────────────────────────
+        format_options = [""] + STORE_FORMATS
+        file_store_format = row_cols[5].selectbox(
+            "Store Format",
+            options=format_options,
+            index=0,
+            key=f"meta_{idx}_format",
+            label_visibility="collapsed",
+        )
+
+        # If "Other" selected, show custom format text input
+        if file_store_format == "Other":
+            file_store_format = st.text_input(
+                "Custom Store Format",
+                value="",
+                key=f"meta_{idx}_format_custom",
+            )
 
     # Warn about low-confidence parses
-    low_confidence_count = int((edited_metadata["Confidence"] < 80).sum())
     if low_confidence_count > 0:
         st.warning(
             f"{low_confidence_count} file(s) have low parsing confidence. "
-            "Please verify the Retailer, City, and Format columns."
+            "Please verify all fields carefully."
         )
 
     # Confirm & Process button
     if st.button("Confirm & Process ▶", type="primary", use_container_width=True):
-        # Validate: Retailer and City must be filled
-        missing_retailer = edited_metadata["Retailer"].eq("").sum()
-        missing_city = edited_metadata["City"].eq("").sum()
+        # Collect metadata from session state widgets
+        collected_metadata: list[dict] = []
+        missing_retailer = 0
+        missing_city = 0
+
+        for idx, parsed in enumerate(parsed_results):
+            meta_country = st.session_state.get(f"meta_{idx}_country", "United Kingdom")
+            meta_city = st.session_state.get(f"meta_{idx}_city", "")
+            meta_retailer = st.session_state.get(f"meta_{idx}_retailer", "")
+            meta_store_name = st.session_state.get(f"meta_{idx}_store_name", "")
+            meta_format = st.session_state.get(f"meta_{idx}_format", "")
+
+            # Resolve "Other" custom values
+            if meta_retailer == "Other":
+                meta_retailer = st.session_state.get(f"meta_{idx}_retailer_custom", "")
+            if meta_format == "Other":
+                meta_format = st.session_state.get(f"meta_{idx}_format_custom", "")
+
+            if not meta_retailer:
+                missing_retailer += 1
+            if not meta_city:
+                missing_city += 1
+
+            collected_metadata.append({
+                "File": parsed["filename"],
+                "Country": meta_country,
+                "City": meta_city,
+                "Retailer": meta_retailer,
+                "Store Name": meta_store_name,
+                "Store Format": meta_format,
+            })
 
         if missing_retailer > 0 or missing_city > 0:
             st.error(
@@ -272,7 +356,7 @@ if raw_files:
                 f"Missing: {missing_retailer} retailer(s), {missing_city} city/cities."
             )
         else:
-            st.session_state["file_metadata"] = edited_metadata.to_dict("records")
+            st.session_state["file_metadata"] = collected_metadata
             st.session_state["metadata_confirmed"] = True
             st.session_state["processing_complete"] = False
             st.session_state["overlap_decisions_applied"] = False
@@ -355,24 +439,16 @@ if (
                 internal_cols = [c for c in dataframe.columns if c.startswith("_")]
                 dataframe = dataframe.drop(columns=internal_cols, errors="ignore")
 
-                # ── Step 3: Inject filename-derived metadata ──────
+                # ── Step 3: Inject per-file metadata ────────────────
+                file_country = meta["Country"]
+                file_currency = COUNTRY_CURRENCY_MAP.get(file_country, "EUR")
+
                 dataframe["Retailer"] = meta["Retailer"]
                 dataframe["City"] = meta["City"]
-                if meta["Format"]:
-                    dataframe["Store Format"] = meta["Format"]
-                else:
-                    dataframe["Store Format"] = None
+                dataframe["Country"] = file_country
+                dataframe["Store Name"] = meta.get("Store Name") or None
+                dataframe["Store Format"] = meta.get("Store Format") or None
 
-                # Derived columns
-                dataframe["Country"] = country
-                dataframe["Store Name"] = dataframe.apply(
-                    lambda row: (
-                        f"{row['Retailer']} {row['City']}"
-                        if pd.notna(row.get("Retailer")) and pd.notna(row.get("City"))
-                        else None
-                    ),
-                    axis=1,
-                )
                 if "Product Name" not in dataframe.columns:
                     dataframe["Product Name"] = None
 
@@ -397,10 +473,13 @@ if (
                 # ── Step 6: Calculate prices ──────────────────────
                 with status_container.container():
                     st.text(f"Calculating prices for {filename}...")
+
+                # Build the exchange rates dict for this file's currency
+                file_exchange_rates = {"EUR": 1.0, "GBP": exchange_rate_gbp_eur}
                 price_result = calculate_prices(
                     dataframe,
-                    exchange_rates={currency_code: exchange_rate},
-                    country=country,
+                    exchange_rates=file_exchange_rates,
+                    country=file_country,
                 )
                 dataframe = price_result.dataframe
                 for err in price_result.errors:
@@ -440,9 +519,11 @@ if (
 
                 source_files_info.append({
                     "filename": filename,
+                    "country": meta["Country"],
                     "retailer": meta["Retailer"],
                     "city": meta["City"],
-                    "store_format": meta["Format"] or "",
+                    "store_name": meta.get("Store Name", ""),
+                    "store_format": meta.get("Store Format", ""),
                     "row_count": len(dataframe),
                     "date_processed": datetime.now().strftime("%Y-%m-%d %H:%M"),
                 })
@@ -603,7 +684,7 @@ if (
             dataframe=final_df,
             normalization_log=all_changes_log,
             flagged_items=flagged_as_dicts,
-            exchange_rate_used={currency_code: exchange_rate},
+            exchange_rate_used={"GBP": exchange_rate_gbp_eur, "EUR": 1.0},
             source_filenames=[info["filename"] for info in source_files_info],
             rows_per_file={
                 info["filename"]: info["row_count"]
@@ -645,9 +726,9 @@ if (
 
     if llm_skipped and not api_key:
         st.info(
-            "No API key provided. Ambiguous items are flagged for manual review "
-            "instead of LLM-resolved. Provide an API key in the sidebar to enable "
-            "automatic resolution."
+            "No API key configured. Ambiguous items are flagged for manual review "
+            "instead of LLM-resolved. Set ANTHROPIC_API_KEY in "
+            ".streamlit/secrets.toml to enable automatic resolution."
         )
 
     if merge_result and merge_result.duplicate_rows_removed > 0:

@@ -94,7 +94,7 @@ REQUIRED_COLUMNS: list[str] = [
 # Valid categorical values for columns with constrained value sets.
 # Values not in these sets are flagged for LLM or manual review.
 VALID_VALUES: dict[str, set[str]] = {
-    "Store Format": {"Small", "Medium", "Large"},
+    "Store Format": {"Hypermarket", "Supermarket", "Discount", "Convenience", "Other"},
     "Shelf Location": {
         "Chilled Section",
         "To-Go Section",
