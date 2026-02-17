@@ -51,10 +51,11 @@ def add_grouped_bar_chart(
     colors: list[RGBColor] | None = None,
 ) -> None:
     """
-    Add a clustered column chart to a slide.
+    Add a stacked column chart (100% stacked) to a slide.
 
     Pivots the DataFrame so each unique value of category_col becomes a
     separate series, with groupby_col values as the x-axis categories.
+    Each bar shows 100% total with segments representing category shares.
 
     Used by: Slide 1 (Market Fingerprint, x5), Slide 3 (chart portion).
 
@@ -96,7 +97,7 @@ def add_grouped_bar_chart(
         chart_data.add_series(str(series_name), values)
 
     chart_frame = slide.shapes.add_chart(
-        XL_CHART_TYPE.COLUMN_CLUSTERED,
+        XL_CHART_TYPE.COLUMN_STACKED_100,
         left, top, width, height,
         chart_data,
     )
@@ -132,6 +133,7 @@ def add_bar_chart(
     colors: list[RGBColor] | None = None,
     show_data_labels: bool = True,
     number_format: str = "0.0",
+    use_stacked: bool = False,
 ) -> None:
     """
     Add a single-series bar chart to a slide.
@@ -151,6 +153,7 @@ def add_bar_chart(
         colors: Per-bar colors. Defaults to COLORS_CATEGORICAL.
         show_data_labels: Whether to show values above bars
         number_format: Number format for data labels (e.g., "0.0" or "0.0%")
+        use_stacked: If True, use 100% stacked chart (for percentage data)
     """
     if data.empty:
         _add_no_data_placeholder(slide, left, top, width, height, title)
@@ -163,11 +166,21 @@ def add_bar_chart(
     categories = data[category_col].tolist()
     values = data[value_col].tolist()
 
-    chart_data.categories = [str(c) for c in categories]
-    chart_data.add_series("Value", [float(v) for v in values])
+    # For stacked charts, we need to create separate series for each category
+    if use_stacked:
+        # Single category with one value - create a series per category
+        chart_data.categories = [""]  # Single bar
+        for idx, cat in enumerate(categories):
+            chart_data.add_series(str(cat), [float(values[idx])])
+    else:
+        # Regular chart - one series, multiple categories
+        chart_data.categories = [str(c) for c in categories]
+        chart_data.add_series("Value", [float(v) for v in values])
 
+    chart_type = XL_CHART_TYPE.COLUMN_STACKED_100 if use_stacked else XL_CHART_TYPE.COLUMN_CLUSTERED
+    
     chart_frame = slide.shapes.add_chart(
-        XL_CHART_TYPE.COLUMN_CLUSTERED,
+        chart_type,
         left, top, width, height,
         chart_data,
     )
@@ -181,25 +194,41 @@ def add_bar_chart(
         chart.chart_title.text_frame.paragraphs[0].font.name = FONT_BODY
         chart.chart_title.text_frame.paragraphs[0].font.bold = True
 
-    # No legend needed for single series
-    chart.has_legend = False
+    # Legend handling
+    if use_stacked:
+        # Show legend for stacked charts to identify segments
+        chart.has_legend = True
+        chart.legend.position = XL_LEGEND_POSITION.BOTTOM
+        chart.legend.include_in_layout = False
+        chart.legend.font.size = Pt(8)
+    else:
+        # No legend needed for single series
+        chart.has_legend = False
 
-    # Color each bar individually
-    series = chart.series[0]
-    for point_idx in range(len(categories)):
-        point = series.points[point_idx]
-        point.format.fill.solid()
-        point.format.fill.fore_color.rgb = colors[point_idx % len(colors)]
+    # Color handling
+    if use_stacked:
+        # Color each series (segment) in the stacked bar
+        for idx, series in enumerate(chart.series):
+            series.format.fill.solid()
+            series.format.fill.fore_color.rgb = colors[idx % len(colors)]
+    else:
+        # Color each bar individually
+        series = chart.series[0]
+        for point_idx in range(len(categories)):
+            point = series.points[point_idx]
+            point.format.fill.solid()
+            point.format.fill.fore_color.rgb = colors[point_idx % len(colors)]
 
     # Data labels
     if show_data_labels:
-        series.has_data_labels = True
-        data_labels = series.data_labels
-        data_labels.font.size = SIZE_CHART_LABEL
-        data_labels.font.name = FONT_BODY
-        data_labels.number_format = number_format
-        data_labels.number_format_is_linked = False
-        data_labels.label_position = XL_LABEL_POSITION.OUTSIDE_END
+        for series in chart.series:
+            series.has_data_labels = True
+            data_labels = series.data_labels
+            data_labels.font.size = SIZE_CHART_LABEL
+            data_labels.font.name = FONT_BODY
+            data_labels.number_format = number_format
+            data_labels.number_format_is_linked = False
+            data_labels.label_position = XL_LABEL_POSITION.INSIDE_END if use_stacked else XL_LABEL_POSITION.OUTSIDE_END
 
     # Style axes
     chart.value_axis.tick_labels.font.size = SIZE_CHART_LABEL

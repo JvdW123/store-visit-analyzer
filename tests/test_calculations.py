@@ -402,7 +402,11 @@ def test_brand_retailer_heatmap_fewer_than_top_n(sample_master_df):
     result = brand_retailer_heatmap(sample_master_df, top_n=100)
     
     # Should return all available brands (Innocent, Tropicana, Aldi, Lidl, Tesco)
-    assert len(result) == 5
+    # Plus the aggregated "Private Label" row
+    assert len(result) == 6
+    
+    # Verify Private Label row is present
+    assert "Private Label" in result["Brand"].values
 
 
 def test_brand_retailer_heatmap_brand_not_at_retailer(sample_master_df):

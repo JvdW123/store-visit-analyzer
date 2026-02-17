@@ -186,6 +186,9 @@ def brand_retailer_heatmap(
     if df_filtered.empty:
         return pd.DataFrame(columns=output_columns)
     
+    # Check if we have the Branded/Private Label column
+    has_pl_column = "Branded/Private Label" in df_filtered.columns
+    
     # Calculate total facings per brand
     brand_totals = (
         df_filtered
@@ -195,8 +198,10 @@ def brand_retailer_heatmap(
         .rename(columns={"Facings": "Total_Facings"})
     )
     
-    # Select top N brands
-    brand_totals = brand_totals.nlargest(min(top_n, len(brand_totals)), "Total_Facings")
+    # Select top N brands (excluding space for Private Label aggregate if needed)
+    # If we have PL column, reserve 1 spot for the aggregate row
+    top_count = min(top_n - 1 if has_pl_column else top_n, len(brand_totals))
+    brand_totals = brand_totals.nlargest(top_count, "Total_Facings")
     top_brands = brand_totals["Brand"].tolist()
     
     # Filter to top brands only
@@ -278,6 +283,41 @@ def brand_retailer_heatmap(
         result = result.drop(columns=["Functional_Facings"])
     else:
         result["% Functional"] = 0.0
+    
+    # Add aggregated "Private Label" row if the column exists
+    if has_pl_column:
+        # Get all Private Label products
+        pl_df = df_filtered[df_filtered["Branded/Private Label"] == "Private Label"].copy()
+        
+        if not pl_df.empty:
+            pl_total_facings = pl_df["Facings"].sum()
+            pl_market_share = _safe_percentage(pl_total_facings, grand_total)
+            
+            # Build the Private Label row
+            pl_row = {"Brand": "Private Label", "Total Market Share": pl_market_share}
+            
+            # Calculate share per retailer
+            for retailer in retailers:
+                retailer_total = df_filtered[df_filtered["Retailer"] == retailer]["Facings"].sum()
+                pl_retailer_facings = pl_df[pl_df["Retailer"] == retailer]["Facings"].sum()
+                pl_row[retailer] = _safe_percentage(pl_retailer_facings, retailer_total)
+            
+            # Calculate % Cold Pressed for Private Label
+            if "Juice Extraction Method" in pl_df.columns:
+                pl_cp_facings = pl_df[pl_df["Juice Extraction Method"] == "Cold Pressed"]["Facings"].sum()
+                pl_row["% Cold Pressed"] = _safe_percentage(pl_cp_facings, pl_total_facings)
+            else:
+                pl_row["% Cold Pressed"] = 0.0
+            
+            # Calculate % Functional for Private Label
+            if "Need State" in pl_df.columns:
+                pl_func_facings = pl_df[pl_df["Need State"] == "Functional"]["Facings"].sum()
+                pl_row["% Functional"] = _safe_percentage(pl_func_facings, pl_total_facings)
+            else:
+                pl_row["% Functional"] = 0.0
+            
+            # Append the Private Label row
+            result = pd.concat([result, pd.DataFrame([pl_row])], ignore_index=True)
     
     # Sort by Total Market Share descending
     result = result.sort_values("Total Market Share", ascending=False)

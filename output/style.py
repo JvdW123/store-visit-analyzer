@@ -106,10 +106,10 @@ SOURCE_TOP = Inches(7.0)
 SOURCE_WIDTH = Inches(8.0)
 SOURCE_HEIGHT = Inches(0.35)
 
-LOGO_WIDTH = Inches(1.2)
-LOGO_HEIGHT = Inches(0.6)
-LOGO_LEFT = Inches(11.8)
-LOGO_TOP = Inches(6.75)
+LOGO_WIDTH = Inches(1.0)
+LOGO_HEIGHT = None  # Will be calculated from aspect ratio
+LOGO_LEFT = Inches(12.0)
+LOGO_TOP = Inches(6.85)
 
 SLIDE_NUMBER_LEFT = Inches(12.5)
 SLIDE_NUMBER_TOP = Inches(7.05)
@@ -240,6 +240,9 @@ def add_source_text(slide, text: str = "Source: Fruity Line store visit data") -
 def add_logo(slide, logo_path: Path | None = None) -> None:
     """
     Place the Fruity Line logo PNG at the bottom-right corner of a slide.
+    
+    Maintains the original aspect ratio of the logo by setting width to 1 inch
+    and calculating height automatically.
 
     Skips silently with a log warning if the logo file doesn't exist.
 
@@ -254,8 +257,10 @@ def add_logo(slide, logo_path: Path | None = None) -> None:
         logger.warning(f"Logo file not found at {logo_path} — skipping logo")
         return
 
+    # Add picture with only width specified - height will be calculated automatically
+    # to maintain aspect ratio
     slide.shapes.add_picture(
-        str(logo_path), LOGO_LEFT, LOGO_TOP, LOGO_WIDTH, LOGO_HEIGHT
+        str(logo_path), LOGO_LEFT, LOGO_TOP, width=LOGO_WIDTH
     )
 
 
@@ -324,10 +329,11 @@ def style_table_header(table, header_color: RGBColor | None = None) -> None:
 
     Args:
         table: pptx Table object
-        header_color: Background color for header cells. Defaults to brand secondary.
+        header_color: Background color for header cells. Defaults to light green.
     """
     if header_color is None:
-        header_color = COLOR_BRAND_SECONDARY
+        # Light green background similar to #D5EFCC
+        header_color = RGBColor(0xD5, 0xEF, 0xCC)
 
     for cell in table.rows[0].cells:
         cell.fill.solid()
@@ -337,7 +343,8 @@ def style_table_header(table, header_color: RGBColor | None = None) -> None:
             paragraph.font.name = FONT_BODY
             paragraph.font.size = SIZE_TABLE_HEADER
             paragraph.font.bold = True
-            paragraph.font.color.rgb = COLOR_WHITE
+            # Use dark text color for light green background
+            paragraph.font.color.rgb = COLOR_BODY_TEXT
 
 
 def style_table_body(table) -> None:

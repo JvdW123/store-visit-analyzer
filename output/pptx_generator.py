@@ -485,23 +485,23 @@ def _build_slide_retailer_deep_dive(
     top_row = CONTENT_TOP
     bottom_row = Inches(3.9)
 
-    # Chart configs: (data_key, title, category_col, value_col, number_format)
+    # Chart configs: (data_key, title, category_col, value_col, number_format, use_stacked)
     chart_configs = [
         (
             "product_type", "Facings by Product Type",
-            "Product Type", "Facings", "0",
+            "Product Type", "Facings", "0", False,
         ),
         (
             "pl_vs_branded", "% PL vs Branded",
-            "Branded/Private Label", "Percentage", "0.0",
+            "Branded/Private Label", "Percentage", "0.0", True,
         ),
         (
             "extraction", "% Cold Pressed vs Other",
-            "Juice Extraction Method", "Percentage", "0.0",
+            "Juice Extraction Method", "Percentage", "0.0", True,
         ),
         (
             "need_state", "% Indulgence vs Functional",
-            "Need State", "Percentage", "0.0",
+            "Need State", "Percentage", "0.0", True,
         ),
     ]
 
@@ -512,7 +512,7 @@ def _build_slide_retailer_deep_dive(
         (right_col, bottom_row),
     ]
 
-    for (data_key, chart_title, cat_col, val_col, num_fmt), (pos_left, pos_top) in zip(
+    for (data_key, chart_title, cat_col, val_col, num_fmt, stacked), (pos_left, pos_top) in zip(
         chart_configs, positions
     ):
         chart_df = slide_data.get(data_key, pd.DataFrame())
@@ -534,6 +534,7 @@ def _build_slide_retailer_deep_dive(
             colors=colors,
             show_data_labels=True,
             number_format=num_fmt,
+            use_stacked=stacked,
         )
 
     add_source_text(slide, SOURCE_TEXT)
