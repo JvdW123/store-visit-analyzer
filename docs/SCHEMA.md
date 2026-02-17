@@ -20,8 +20,8 @@
 | 11 | Branded/Private Label | Text | No | Raw: "Branded / Private Label" | "Branded", "Private Label" |
 | 12 | Brand | Text | No | Direct match | Free text, as-is from source |
 | 13 | Sub-brand | Text | No | Direct match | Free text, as-is from source |
-| 14 | Product Name | Text | No | Not in raw files | Left blank |
-| 15 | Flavor | Text | No | Direct match | Free text, as-is from source |
+| 14 | Product Name | Text | No | Raw: "Flavor" | Free text, as-is from source (raw "Flavor" column contains product name data) |
+| 15 | Flavor | Text | No | LLM-inferred from Product Name | Free text, flavor/fruit extracted from Product Name by LLM |
 | 16 | Facings | Integer | No | Direct match | Must be numeric |
 | 17 | Price (Local Currency) | Float | No | Raw: "Price (GBP/EUR/Pounds)" | 2 decimal places |
 | 18 | Currency | Text | Yes | Derived from Country | "GBP", "EUR" |
@@ -30,7 +30,7 @@
 | 21 | Price per Liter (EUR) | Float | No | Calculated | Price (EUR) / (Packaging Size / 1000). 2 decimal places. |
 | 22 | Need State | Text | No | Raw: "Sub-segment" | "Indulgence", "Functional" |
 | 23 | Juice Extraction Method | Text | No | LLM-inferred | "Squeezed", "Cold Pressed", "From Concentrate" |
-| 24 | Processing Method | Text | No | Direct + LLM | "Pasteurized", "HPP", "Unpasteurized", "Cold Pressed", "Freshly Squeezed" |
+| 24 | Processing Method | Text | No | Direct + LLM | "Pasteurized", "HPP" |
 | 25 | HPP Treatment | Text | No | Direct + LLM | "Yes", "No" |
 | 26 | Packaging Type | Text | No | Direct match | "PET Bottle", "Tetra Pak", "Can", "Carton", "Glass Bottle" |
 | 27 | Claims | Text | No | Direct match | Free text, as-is from source |
@@ -55,7 +55,7 @@
 | Branded/Private Label | "Branded / Private Label" | Known rename |
 | Brand | "Brand" | Exact match |
 | Sub-brand | "Sub-brand" | Exact match |
-| Flavor | "Flavor" | Exact match |
+| Product Name | "Flavor" | Known rename (raw "Flavor" contains product name data) |
 | Facings | "Facings" | Exact match |
 | Price (Local Currency) | "Price (GBP)", "Price (EUR)", "Price (Pounds)" | Fuzzy match on "Price" |
 | Packaging Size (ml) | "Packaging Size (ml)" | Exact match |
@@ -87,7 +87,8 @@ For unmatched column names: fuzzy string matching → LLM fallback → flag for 
 | Currency | From Country mapping | UK → "GBP", France/Germany → "EUR" |
 | Price (EUR) | `Price_Local × exchange_rate` | 1.0 if already EUR |
 | Price per Liter (EUR) | `Price_EUR / (Packaging_Size_ml / 1000)` | Blank if either input is missing |
-| Juice Extraction Method | LLM-inferred from Processing Method + Claims + Notes | See RULES.md |
+| Juice Extraction Method | Deterministic rules first (HPP Treatment, Processing Method, Claims/Notes), LLM fallback | See RULES.md |
+| Flavor | LLM-inferred from Product Name | Extracted flavor/fruit from product name text |
 
 ---
 

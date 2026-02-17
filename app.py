@@ -451,6 +451,8 @@ if (
 
                 if "Product Name" not in dataframe.columns:
                     dataframe["Product Name"] = None
+                if "Flavor" not in dataframe.columns:
+                    dataframe["Flavor"] = None
 
                 # ── Step 4: Normalize categorical values ──────────
                 with status_container.container():
@@ -780,40 +782,53 @@ if (
             "Review the Data Quality Report sheet in the downloaded Excel."
         )
 
-    # ── Data Preview ──────────────────────────────────────────────
+    # ── Data Error Check ─────────────────────────────────────────
     st.divider()
-    st.header("📋 Step 3: Data Preview")
+    st.header("📋 Step 3: Data Error Check")
 
     # Build the set of flagged cells for highlighting
     flagged_cells_set: set[tuple[int, str]] = {
         (item.row_index, item.column) for item in all_flagged_items
     }
 
-    # Limit preview to 200 rows for performance with Styler
-    preview_row_limit = 200
-    if len(final_df) > preview_row_limit:
-        st.caption(
-            f"Showing first {preview_row_limit} of {len(final_df)} rows. "
-            "Download the Excel file for the full dataset."
-        )
-    preview_df = final_df.head(preview_row_limit)
+    # Identify rows that have at least one flagged cell
+    flagged_row_indices: set[int] = {row_idx for row_idx, _ in flagged_cells_set}
+    total_rows = len(final_df)
+    flagged_row_count = len(flagged_row_indices & set(final_df.index))
 
-    # Apply yellow highlighting on flagged cells via pandas Styler
-    if flagged_cells_set:
-        def _highlight_flagged(row: pd.Series) -> list[str]:
-            """Return CSS styles for a row — yellow for flagged cells."""
-            styles = []
-            for col in row.index:
-                if (row.name, col) in flagged_cells_set:
-                    styles.append("background-color: #FFFF00")
-                else:
-                    styles.append("")
-            return styles
-
-        styled_preview = preview_df.style.apply(_highlight_flagged, axis=1)
-        st.dataframe(styled_preview, use_container_width=True, hide_index=True)
+    if flagged_row_count == 0:
+        st.success("All data clean!")
     else:
-        st.dataframe(preview_df, use_container_width=True, hide_index=True)
+        st.warning(
+            f"{flagged_row_count} rows with issues out of {total_rows} total rows"
+        )
+
+        # Filter to only flagged rows, preserving original index for write-back
+        error_df = final_df.loc[final_df.index.isin(flagged_row_indices)].copy()
+
+        # Show editable table for flagged rows
+        edited_error_df = st.data_editor(
+            error_df,
+            use_container_width=True,
+            hide_index=True,
+            num_rows="fixed",
+            key="error_editor",
+        )
+
+        # Apply user edits back to the final DataFrame
+        for col in edited_error_df.columns:
+            for idx in edited_error_df.index:
+                new_val = edited_error_df.at[idx, col]
+                old_val = final_df.at[idx, col]
+                both_na = pd.isna(new_val) and pd.isna(old_val)
+                if not both_na and new_val != old_val:
+                    final_df.at[idx, col] = new_val
+
+        st.session_state["final_dataframe"] = final_df
+
+    # Expandable full data view (collapsed by default)
+    with st.expander("View Full Data"):
+        st.dataframe(final_df, use_container_width=True, hide_index=True)
 
     # ── Download Button ───────────────────────────────────────────
     st.divider()

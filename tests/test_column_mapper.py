@@ -35,13 +35,13 @@ class TestExactMatches:
         """'BRAND' and 'brand' should both map to 'Brand'."""
         result = map_columns(["brand", "FLAVOR"])
         assert result.mapping["brand"] == "Brand"
-        assert result.mapping["FLAVOR"] == "Flavor"
+        assert result.mapping["FLAVOR"] == "Product Name"
 
     def test_whitespace_stripped(self):
         """Leading/trailing whitespace should be ignored."""
         result = map_columns(["  Brand  ", " Flavor "])
         assert result.mapping["  Brand  "] == "Brand"
-        assert result.mapping[" Flavor "] == "Flavor"
+        assert result.mapping[" Flavor "] == "Product Name"
 
     def test_photo_file_name_variant(self):
         """'Photo File Name' should map to 'Photo'."""

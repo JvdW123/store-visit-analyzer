@@ -52,7 +52,7 @@ STEP 3 — DETERMINISTIC (no LLM, instant)
 | 6 | Known categorical normalization | **Code only** (lookup tables) | — | Explicit rules, fast, no errors |
 | 7 | Unknown categorical values | **LLM** | Sonnet | Semantic judgment: "Health juice" → "Other" |
 | 8 | Shelf Location normalization | **LLM** (except exact matches) | Sonnet | High variability, unpredictable phrasing |
-| 9 | Juice Extraction Method inference | **LLM** | Sonnet | Reads across Processing Method + Claims + Notes |
+| 9 | Juice Extraction Method inference | **Code first**, LLM fallback | Sonnet | Deterministic rules from HPP/Processing/Claims/Notes; Sonnet for remainder |
 | 10 | Processing Method edge cases | **LLM** | Sonnet | Contradictions need judgment |
 | 11 | HPP Treatment edge cases | **LLM** | Sonnet | Conflicting signals between columns |
 | 12 | Typo correction | **Code first** (fuzzy match), LLM confirmation | Sonnet | Levenshtein catches typos, Sonnet confirms |
@@ -98,17 +98,20 @@ All matching is case-insensitive. Leading/trailing whitespace is stripped before
 | null / blank | blank |
 
 ### Processing Method
+**Valid values:** "Pasteurized", "HPP"
+
 | Raw Value | Normalized |
 |-----------|-----------|
 | "Pasteurized", "pasteurised", "Pasteurised", "Flash pasteurised" | "Pasteurized" |
-| "Cold-pressed", "Cold pressed", "Pressed" | "Cold Pressed" |
-| "unpasteurised", "Unpasteurised", "Not pasteurised" | "Unpasteurized" |
-| "Freshly Squeezed", "freshly squeezed" | "Freshly Squeezed" |
+| "Cold-pressed", "Cold pressed", "Pressed" | blank (informs Juice Extraction Method instead) |
+| "unpasteurised", "Unpasteurised", "Not pasteurised" | blank (removed as Processing Method value) |
+| "Freshly Squeezed", "freshly squeezed" | blank (informs Juice Extraction Method instead) |
 | "HPP", "HPP Treated", "HPP Treatment" | "HPP" |
 | "Unknown", "unknown" | blank |
 | null / blank | blank |
 
 **Additional rule:** If HPP Treatment = "Yes" AND Processing Method is blank → set Processing Method = "HPP"
+**LLM fallback:** For remaining blank Processing Method values, the LLM reads Claims + Notes + Brand to determine "Pasteurized" or "HPP". If the LLM cannot determine → leave blank.
 
 ### HPP Treatment
 | Raw Value | Normalized |
@@ -157,6 +160,33 @@ All matching is case-insensitive. Leading/trailing whitespace is stripped before
 - "Meal Deal Section" → "Meal Deal Section"
 
 All other non-blank values → send to LLM for classification.
+
+### Juice Extraction Method — Deterministic Inference Rules
+**Valid values:** "Cold Pressed", "Squeezed", "From Concentrate"
+
+Deterministic rules are applied in order; first match wins per row:
+
+| # | Rule | Result |
+|---|------|--------|
+| 1 | HPP Treatment == "Yes" | "Cold Pressed" |
+| 2 | Processing Method == "HPP" | "Cold Pressed" |
+| 3 | Processing Method == "Freshly Squeezed" | "Squeezed" |
+| 4 | Claims or Notes contain "from concentrate" (case-insensitive) | "From Concentrate" |
+| 5 | Claims or Notes contain "cold pressed" or "cold-pressed" (case-insensitive) | "Cold Pressed" |
+| 6 | Claims or Notes contain "squeezed" or "freshly squeezed" (case-insensitive) | "Squeezed" |
+| 7 | None of the above match | Flag for LLM |
+
+**LLM prompt context for Juice Extraction Method:** Brand, Product Name, Claims, Notes, Processing Method, HPP Treatment.
+
+### Flavor — LLM Extraction from Product Name
+The raw Excel column "Flavor" actually contains Product Name data (the text on the label/logo). After column mapping remaps raw "Flavor" → "Product Name", the Flavor column is populated by LLM inference.
+
+For every row with a Product Name but no Flavor, the LLM is asked to extract the flavor or fruit combination from the product name. Examples:
+- "Innocent Smoothie Orange & Mango 750ml" → Flavor: "Orange & Mango"
+- "Tropicana Pure Premium Orange With Bits" → Flavor: "Orange"
+- "Naked Green Machine 750ml" → Flavor: "Green Machine"
+
+If no clear flavor can be determined, Flavor is left blank.
 
 ---
 
@@ -215,7 +245,7 @@ MASTER SCHEMA VALID VALUES:
 - Product Type: "Pure Juices", "Smoothies", "Shots", "Other"
 - Need State: "Indulgence", "Functional"
 - Branded/Private Label: "Branded", "Private Label"
-- Processing Method: "Pasteurized", "HPP", "Unpasteurized", "Cold Pressed", "Freshly Squeezed"
+- Processing Method: "Pasteurized", "HPP"
 - HPP Treatment: "Yes", "No"
 - Packaging Type: "PET Bottle", "Tetra Pak", "Can", "Carton", "Glass Bottle"
 - Juice Extraction Method: "Squeezed", "Cold Pressed", "From Concentrate"

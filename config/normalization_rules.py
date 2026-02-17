@@ -48,13 +48,13 @@ PROCESSING_METHOD_MAP: dict[str, str] = {
     "pasteurized": "Pasteurized",
     "pasteurised": "Pasteurized",
     "flash pasteurised": "Pasteurized",
-    "cold-pressed": "Cold Pressed",
-    "cold pressed": "Cold Pressed",
-    "pressed": "Cold Pressed",
-    "unpasteurised": "Unpasteurized",
-    "unpasteurized": "Unpasteurized",
-    "not pasteurised": "Unpasteurized",
-    "freshly squeezed": "Freshly Squeezed",
+    "cold-pressed": "",       # blank — informs Juice Extraction Method, not Processing Method
+    "cold pressed": "",       # blank — informs Juice Extraction Method, not Processing Method
+    "pressed": "",            # blank — informs Juice Extraction Method, not Processing Method
+    "unpasteurised": "",      # blank — removed as Processing Method value
+    "unpasteurized": "",      # blank — removed as Processing Method value
+    "not pasteurised": "",    # blank — removed as Processing Method value
+    "freshly squeezed": "",   # blank — informs Juice Extraction Method, not Processing Method
     "hpp": "HPP",
     "hpp treated": "HPP",
     "hpp treatment": "HPP",
@@ -153,12 +153,10 @@ COLUMN_TO_RULE_MAP: dict[str, dict[str, str]] = {
 
 # ---------------------------------------------------------------------------
 # Columns that are ALWAYS sent to LLM for non-blank, non-lookup values.
-# Shelf Location: all non-exact-match values go to LLM.
-# Juice Extraction Method: entirely LLM-inferred (no deterministic rules).
+# (Juice Extraction Method used to be here but now has deterministic rules
+# with LLM fallback — handled directly in normalizer.py.)
 # ---------------------------------------------------------------------------
-LLM_ONLY_COLUMNS: set[str] = {
-    "Juice Extraction Method",
-}
+LLM_ONLY_COLUMNS: set[str] = set()
 
 # Columns where non-matched values should be flagged for LLM rather than
 # left as-is.  This is all columns in COLUMN_TO_RULE_MAP plus LLM_ONLY_COLUMNS.

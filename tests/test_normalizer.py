@@ -24,6 +24,7 @@ def _make_df(overrides: dict | None = None, rows: int = 1) -> pd.DataFrame:
     """Build a single-row DataFrame with sensible defaults, optionally overridden."""
     base = {
         "Brand": ["TestBrand"] * rows,
+        "Product Name": [None] * rows,
         "Flavor": ["Orange"] * rows,
         "Product Type": [None] * rows,
         "Need State": [None] * rows,
@@ -134,10 +135,23 @@ class TestProcessingMethodNormalization:
         result = normalize(df)
         assert result.dataframe.at[0, "Processing Method"] == "Pasteurized"
 
-    def test_cold_pressed_hyphenated(self):
+    def test_cold_pressed_hyphenated_maps_to_blank(self):
+        """Cold-pressed maps to blank — it informs Juice Extraction Method instead."""
         df = _make_df({"Processing Method": "Cold-pressed"})
         result = normalize(df)
-        assert result.dataframe.at[0, "Processing Method"] == "Cold Pressed"
+        assert pd.isna(result.dataframe.at[0, "Processing Method"])
+
+    def test_freshly_squeezed_maps_to_blank(self):
+        """Freshly Squeezed maps to blank — it informs Juice Extraction Method."""
+        df = _make_df({"Processing Method": "Freshly Squeezed"})
+        result = normalize(df)
+        assert pd.isna(result.dataframe.at[0, "Processing Method"])
+
+    def test_unpasteurised_maps_to_blank(self):
+        """Unpasteurised maps to blank — removed as Processing Method value."""
+        df = _make_df({"Processing Method": "Unpasteurised"})
+        result = normalize(df)
+        assert pd.isna(result.dataframe.at[0, "Processing Method"])
 
     def test_unknown_maps_to_blank(self):
         df = _make_df({"Processing Method": "Unknown"})
@@ -232,12 +246,24 @@ class TestCrossColumnRule:
         assert result.dataframe.at[0, "Processing Method"] == "HPP"
 
     def test_hpp_yes_existing_processing_not_overwritten(self):
+        """When HPP Treatment is Yes but Processing Method already has a valid
+        value (Pasteurized), the cross-column rule should not overwrite it."""
+        df = _make_df({
+            "HPP Treatment": "Yes",
+            "Processing Method": "Pasteurized",
+        })
+        result = normalize(df)
+        assert result.dataframe.at[0, "Processing Method"] == "Pasteurized"
+
+    def test_hpp_yes_cold_pressed_raw_becomes_hpp(self):
+        """Raw 'Cold Pressed' maps to blank, then HPP Treatment=Yes fills it."""
         df = _make_df({
             "HPP Treatment": "Yes",
             "Processing Method": "Cold Pressed",
         })
         result = normalize(df)
-        assert result.dataframe.at[0, "Processing Method"] == "Cold Pressed"
+        # "Cold Pressed" → blank in normalization, then cross-column rule sets "HPP"
+        assert result.dataframe.at[0, "Processing Method"] == "HPP"
 
     def test_hpp_no_blank_processing_stays_blank(self):
         df = _make_df({
@@ -249,11 +275,72 @@ class TestCrossColumnRule:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Juice Extraction Method — always flagged
+# Juice Extraction Method — deterministic inference
 # ═══════════════════════════════════════════════════════════════════════════
 
-class TestJuiceExtractionMethodFlagging:
-    def test_non_blank_value_flagged(self):
+class TestJuiceExtractionMethodInference:
+    def test_hpp_treatment_yes_infers_cold_pressed(self):
+        """Rule 1: HPP Treatment == 'Yes' → Cold Pressed."""
+        df = _make_df({"HPP Treatment": "Yes"})
+        result = normalize(df)
+        assert result.dataframe.at[0, "Juice Extraction Method"] == "Cold Pressed"
+
+    def test_processing_method_hpp_infers_cold_pressed(self):
+        """Rule 2: Processing Method == 'HPP' → Cold Pressed."""
+        df = _make_df({"Processing Method": "HPP"})
+        result = normalize(df)
+        assert result.dataframe.at[0, "Juice Extraction Method"] == "Cold Pressed"
+
+    def test_claims_from_concentrate(self):
+        """Rule 4: Claims contain 'from concentrate' → From Concentrate."""
+        df = _make_df({"Claims": "Made from concentrate, 100% juice"})
+        result = normalize(df)
+        assert result.dataframe.at[0, "Juice Extraction Method"] == "From Concentrate"
+
+    def test_claims_cold_pressed(self):
+        """Rule 5: Claims contain 'cold pressed' → Cold Pressed."""
+        df = _make_df({"Claims": "Cold pressed, organic"})
+        result = normalize(df)
+        assert result.dataframe.at[0, "Juice Extraction Method"] == "Cold Pressed"
+
+    def test_claims_cold_pressed_hyphenated(self):
+        """Rule 5: Claims contain 'cold-pressed' → Cold Pressed."""
+        df = _make_df({"Claims": "cold-pressed juice"})
+        result = normalize(df)
+        assert result.dataframe.at[0, "Juice Extraction Method"] == "Cold Pressed"
+
+    def test_notes_squeezed(self):
+        """Rule 6: Notes contain 'squeezed' → Squeezed."""
+        df = _make_df({"Notes": "freshly squeezed daily"})
+        result = normalize(df)
+        assert result.dataframe.at[0, "Juice Extraction Method"] == "Squeezed"
+
+    def test_no_match_blank_flagged_for_llm(self):
+        """Rule 7: No deterministic match → flagged for LLM."""
+        df = _make_df({
+            "Juice Extraction Method": None,
+            "HPP Treatment": "No",
+            "Processing Method": "Pasteurized",
+            "Claims": "100% organic",
+        })
+        result = normalize(df)
+        jem_flagged = [
+            f for f in result.flagged_items if f.column == "Juice Extraction Method"
+        ]
+        assert len(jem_flagged) == 1
+
+    def test_valid_value_not_overwritten(self):
+        """A value already in VALID_VALUES should not be changed."""
+        df = _make_df({"Juice Extraction Method": "Squeezed"})
+        result = normalize(df)
+        assert result.dataframe.at[0, "Juice Extraction Method"] == "Squeezed"
+        jem_flagged = [
+            f for f in result.flagged_items if f.column == "Juice Extraction Method"
+        ]
+        assert len(jem_flagged) == 0
+
+    def test_non_valid_value_flagged(self):
+        """A non-blank, non-valid value should be flagged."""
         df = _make_df({"Juice Extraction Method": "hand squeezed"})
         result = normalize(df)
         jem_flagged = [
@@ -261,22 +348,70 @@ class TestJuiceExtractionMethodFlagging:
         ]
         assert len(jem_flagged) == 1
 
-    def test_blank_value_not_flagged(self):
-        df = _make_df({"Juice Extraction Method": None})
+    def test_rule_priority_hpp_over_claims(self):
+        """Rule 1 (HPP Treatment=Yes) takes priority over Rule 4 (from concentrate in Claims)."""
+        df = _make_df({
+            "HPP Treatment": "Yes",
+            "Claims": "from concentrate",
+        })
         result = normalize(df)
-        jem_flagged = [
-            f for f in result.flagged_items if f.column == "Juice Extraction Method"
-        ]
-        assert len(jem_flagged) == 0
+        assert result.dataframe.at[0, "Juice Extraction Method"] == "Cold Pressed"
 
-    def test_valid_value_not_flagged(self):
-        """A value already in VALID_VALUES should not be flagged."""
-        df = _make_df({"Juice Extraction Method": "Squeezed"})
+    def test_inference_logged_in_changes(self):
+        """Deterministic inference should appear in the changes log."""
+        df = _make_df({"HPP Treatment": "Yes"})
         result = normalize(df)
-        jem_flagged = [
-            f for f in result.flagged_items if f.column == "Juice Extraction Method"
-        ]
-        assert len(jem_flagged) == 0
+        jem_changes = [c for c in result.changes_log if c["column"] == "Juice Extraction Method"]
+        assert len(jem_changes) >= 1
+        assert jem_changes[0]["normalized"] == "Cold Pressed"
+        assert "deterministic" in jem_changes[0]["method"]
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Flavor flagging — Product Name present but no Flavor
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestFlavorFlagging:
+    def test_product_name_no_flavor_flagged(self):
+        """Row with Product Name but no Flavor should be flagged."""
+        df = _make_df({
+            "Product Name": "Innocent Smoothie Orange & Mango 750ml",
+            "Flavor": None,
+        })
+        result = normalize(df)
+        flavor_flagged = [f for f in result.flagged_items if f.column == "Flavor"]
+        assert len(flavor_flagged) == 1
+
+    def test_product_name_with_flavor_not_flagged(self):
+        """Row with both Product Name and Flavor should not be flagged."""
+        df = _make_df({
+            "Product Name": "Innocent Smoothie Orange & Mango 750ml",
+            "Flavor": "Orange & Mango",
+        })
+        result = normalize(df)
+        flavor_flagged = [f for f in result.flagged_items if f.column == "Flavor"]
+        assert len(flavor_flagged) == 0
+
+    def test_no_product_name_not_flagged(self):
+        """Row with no Product Name should not be flagged for Flavor."""
+        df = _make_df({
+            "Product Name": None,
+            "Flavor": None,
+        })
+        result = normalize(df)
+        flavor_flagged = [f for f in result.flagged_items if f.column == "Flavor"]
+        assert len(flavor_flagged) == 0
+
+    def test_flavor_context_includes_product_name(self):
+        """Flagged Flavor item should include Product Name in context."""
+        df = _make_df({
+            "Product Name": "Tropicana Pure Premium Orange",
+            "Flavor": None,
+        })
+        result = normalize(df)
+        flavor_flagged = [f for f in result.flagged_items if f.column == "Flavor"]
+        assert len(flavor_flagged) == 1
+        assert flavor_flagged[0].context.get("Product Name") == "Tropicana Pure Premium Orange"
 
 
 # ═══════════════════════════════════════════════════════════════════════════

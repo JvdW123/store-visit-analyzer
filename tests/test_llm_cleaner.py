@@ -108,6 +108,11 @@ class TestBuildPrompt:
         assert "Pure Juices" in prompt
         assert "Smoothies" in prompt
         assert "Chilled Section" in prompt
+        # Processing Method now only has Pasteurized and HPP
+        assert '"Pasteurized", "HPP"' in prompt
+        # Flavor extraction instructions
+        assert "Flavor" in prompt
+        assert "extract the flavor" in prompt.lower()
 
     def test_prompt_has_json_structure(self):
         flagged = [_make_flagged_item()]

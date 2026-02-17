@@ -48,13 +48,26 @@ MASTER SCHEMA VALID VALUES:
 - Product Type: "Pure Juices", "Smoothies", "Shots", "Other"
 - Need State: "Indulgence", "Functional"
 - Branded/Private Label: "Branded", "Private Label"
-- Processing Method: "Pasteurized", "HPP", "Unpasteurized", "Cold Pressed", "Freshly Squeezed"
+- Processing Method: "Pasteurized", "HPP"
 - HPP Treatment: "Yes", "No"
 - Packaging Type: "PET Bottle", "Tetra Pak", "Can", "Carton", "Glass Bottle"
 - Juice Extraction Method: "Squeezed", "Cold Pressed", "From Concentrate"
 - Stock Status: "In Stock", "Out of Stock"
 - Shelf Level: "1st", "2nd", "3rd", "4th", "5th", "6th"
 - Shelf Location: "Chilled Section", "To-Go Section", "To-Go Section — Shots", "Meal Deal Section"
+- Flavor: free text (extract from Product Name)
+
+COLUMN-SPECIFIC INSTRUCTIONS:
+- Processing Method: determine if the product is "Pasteurized" or "HPP" based
+  on Claims, Notes, and Brand. If you cannot determine, return blank.
+- Juice Extraction Method: consider the full row context — Brand, Product Name,
+  Claims, Notes, Processing Method, HPP Treatment. Valid values: "Cold Pressed",
+  "Squeezed", "From Concentrate".
+- Flavor: extract the flavor or fruit combination from the Product Name. Focus
+  on the fruit/ingredient descriptors. For example: "Innocent Smoothie Orange &
+  Mango 750ml" → "Orange & Mango", "Tropicana Pure Premium Orange With Bits" →
+  "Orange", "Naked Green Machine 750ml" → "Green Machine". If no clear flavor,
+  return blank.
 
 ITEMS TO RESOLVE:
 {flagged_items_json}

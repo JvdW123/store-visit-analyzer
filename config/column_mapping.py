@@ -20,7 +20,7 @@ EXACT_MATCHES: dict[str, str] = {
     "shelf level": "Shelf Level",
     "brand": "Brand",
     "sub-brand": "Sub-brand",
-    "flavor": "Flavor",
+    "flavor": "Product Name",
     "facings": "Facings",
     "packaging size (ml)": "Packaging Size (ml)",
     "processing method": "Processing Method",

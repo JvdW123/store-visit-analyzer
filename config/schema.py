@@ -109,9 +109,6 @@ VALID_VALUES: dict[str, set[str]] = {
     "Processing Method": {
         "Pasteurized",
         "HPP",
-        "Unpasteurized",
-        "Cold Pressed",
-        "Freshly Squeezed",
     },
     "HPP Treatment": {"Yes", "No"},
     "Packaging Type": {"PET Bottle", "Tetra Pak", "Can", "Carton", "Glass Bottle"},
