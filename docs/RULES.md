@@ -42,26 +42,30 @@ STEP 3 — DETERMINISTIC (no LLM, instant)
 
 ## Decision Matrix: Deterministic vs. LLM
 
-| Processing Step | Approach | Rationale |
-|----------------|----------|-----------|
-| Excel reading & image skipping | **Deterministic** | Mechanical: openpyxl handles this |
-| Structure detection (header rows, merged cells) | **Deterministic** | Pattern-based: scan for header-like rows, detect merged ranges |
-| Section metadata extraction | **Deterministic** | Parse merged cell text by splitting on "\|" delimiter |
-| Filename → Retailer/City/Format | **Deterministic** (known-value lookup + fuzzy match) | Retailers are a finite set. LLM fallback only if confidence < threshold |
-| Column name mapping | **Deterministic** (exact + fuzzy match), LLM fallback | Most names are recognizable. Only novel names need LLM |
-| Known categorical normalization | **Deterministic** (lookup tables below) | Explicit rules, fast and reliable |
-| Unknown categorical values | **LLM** | Requires semantic understanding |
-| Shelf Location normalization | **LLM** (except exact matches to valid categories) | High variability, unpredictable phrasing |
-| Juice Extraction Method inference | **LLM** | Must read across Processing Method + Claims + Notes |
-| Processing Method for unknowns | **LLM** | Edge cases need judgment |
-| HPP Treatment for contradictions | **LLM** | Conflicting signals need resolution |
-| Typo detection & correction | **Deterministic** (fuzzy match, threshold), LLM for confirmation | Levenshtein distance catches most typos |
-| Numeric conversion | **Deterministic** | Regex + type casting |
-| Price per Liter recalculation | **Deterministic** | Pure math |
-| Currency conversion | **Deterministic** | Multiplication by exchange rate |
-| Confidence Score normalization | **Deterministic** | Rule-based scale detection |
-| Deduplication | **Deterministic** | Composite key matching |
-| Quality report | **Deterministic** | Counting and validation |
+| # | Processing Step | Approach | Model | Rationale |
+|---|----------------|----------|-------|-----------|
+| 1 | Excel reading & image skipping | **Code only** | — | Mechanical: openpyxl handles this |
+| 2 | Structure detection (header rows, merged cells) | **Code only** | — | Pattern-based: scan for header-like rows, detect merged ranges |
+| 3 | Section metadata extraction | **Code only** | — | Parse merged cell text by splitting on "\|" delimiter |
+| 4 | Filename → Retailer/City/Format | **Code only** (fuzzy match) | — | Finite set of known values. User confirms in UI anyway |
+| 5 | Column name mapping | **Code first**, LLM fallback | Sonnet | 95% match deterministically. Sonnet only for truly novel column names |
+| 6 | Known categorical normalization | **Code only** (lookup tables) | — | Explicit rules, fast, no errors |
+| 7 | Unknown categorical values | **LLM** | Sonnet | Semantic judgment: "Health juice" → "Other" |
+| 8 | Shelf Location normalization | **LLM** (except exact matches) | Sonnet | High variability, unpredictable phrasing |
+| 9 | Juice Extraction Method inference | **LLM** | Sonnet | Reads across Processing Method + Claims + Notes |
+| 10 | Processing Method edge cases | **LLM** | Sonnet | Contradictions need judgment |
+| 11 | HPP Treatment edge cases | **LLM** | Sonnet | Conflicting signals between columns |
+| 12 | Typo correction | **Code first** (fuzzy match), LLM confirmation | Sonnet | Levenshtein catches typos, Sonnet confirms |
+| 13 | Numeric conversion | **Code only** | — | Regex + type casting |
+| 14 | Price per Liter recalculation | **Code only** | — | Pure math |
+| 15 | Currency conversion | **Code only** | — | Multiplication by exchange rate |
+| 16 | Confidence Score normalization | **Code only** | — | Rule-based scale detection |
+| 17 | Deduplication | **Code only** | — | Composite key matching |
+| 18 | Quality report generation | **Code only** | — | Counting and validation |
+
+**LLM model:** Claude Sonnet (claude-sonnet-4-20250514) — hardcoded, no user choice in UI.
+**LLM calls:** Steps 5 (fallback), 7, 8, 9, 10, 11, 12 (confirmation) are ALL batched into one single API call per file.
+**No API key?** Steps 5-12 are skipped. Ambiguous items flagged in yellow for manual review. Tool still produces ~80-90% clean output.
 
 ---
 
