@@ -423,3 +423,151 @@ def _create_batches(
         batches.append(items[start : start + max_per_batch])
 
     return batches
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Root Cause Analysis for Accuracy Testing
+# ═══════════════════════════════════════════════════════════════════════════
+
+@dataclass
+class DifferenceAnalysis:
+    """LLM analysis of a single difference."""
+    row_key_str: str  # "UK|London|Tesco|photo123.jpg"
+    column: str
+    tool_value: str
+    truth_value: str
+    root_cause_category: str  # (a) through (g)
+    explanation: str  # 1-2 sentence explanation
+    fix_recommendation: str | None  # Actionable fix or None
+
+
+@dataclass
+class RootCauseAnalysisResult:
+    """Output of root cause analysis."""
+    analyses: list[DifferenceAnalysis] = field(default_factory=list)
+    root_cause_summary: dict[str, int] = field(default_factory=dict)  # Category → count
+    api_cost_estimate: float = 0.0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    error: str | None = None
+
+
+_ROOT_CAUSE_PROMPT_TEMPLATE = """You are analyzing differences between a data processing tool's output and ground truth data.
+
+TOOL PROCESSING PIPELINE:
+1. Excel reading → column mapping → normalization (lookup tables) → numeric conversion → price calculation → LLM cleaning
+
+ROOT CAUSE CATEGORIES:
+(a) file_reader_error: Tool misread raw Excel data (merged cells, image interference, structure detection)
+(b) column_mapping_error: Raw column name mapped to wrong master column
+(c) normalization_rule_error: Value not in lookup table, or lookup table has wrong mapping
+(d) llm_inference_error: LLM made incorrect decision (wrong category, wrong extraction)
+(e) numeric_conversion_error: Text-to-number conversion failed or produced wrong result
+(f) price_calculation_error: Price per liter calculation or currency conversion wrong
+(g) ground_truth_error: Ground truth is actually incorrect; tool is right
+
+DIFFERENCES TO ANALYZE:
+{differences_json}
+
+For each difference, return:
+- row_key: the composite key
+- column: column name
+- tool_value: what the tool produced
+- truth_value: what ground truth has
+- root_cause_category: one of (a) through (g) above
+- explanation: 1-2 sentence explanation of why this happened
+- fix_recommendation: specific action to fix (e.g., "Add 'Flash Pasteurised' → 'Pasteurized' to PROCESSING_METHOD_MAP in config/normalization_rules.py") or null if ground truth is wrong
+
+Return a JSON array of analysis objects."""
+
+
+def analyze_differences_for_root_cause(
+    differences_batch: list[dict],
+    api_key: str | None = None,
+) -> RootCauseAnalysisResult:
+    """
+    Analyze differences using Claude Sonnet to determine root causes.
+    
+    Args:
+        differences_batch: List of dicts with keys:
+            - row_key (Country|City|Retailer|Photo)
+            - column
+            - tool_value
+            - truth_value
+            - row_context (full row data from tool output)
+        api_key: Anthropic API key
+    
+    Returns:
+        RootCauseAnalysisResult with categorized root causes and fix recommendations
+    """
+    # No API key → skip entirely
+    if not api_key:
+        logger.info("No API key provided — skipping root cause analysis")
+        return RootCauseAnalysisResult(error="No API key provided")
+    
+    # No differences → nothing to do
+    if not differences_batch:
+        logger.info("No differences to analyze")
+        return RootCauseAnalysisResult()
+    
+    # Build prompt
+    prompt = _ROOT_CAUSE_PROMPT_TEMPLATE.format(
+        differences_json=json.dumps(differences_batch, indent=2, ensure_ascii=False)
+    )
+    
+    # Call API
+    try:
+        response_text, cost, input_tokens, output_tokens = _call_sonnet_api(prompt, api_key)
+    except Exception as exc:
+        logger.error(f"Root cause analysis API call failed: {exc}")
+        return RootCauseAnalysisResult(error=f"API call failed: {exc}")
+    
+    # Parse response
+    analyses_json = _parse_llm_response(response_text)
+    if analyses_json is None:
+        logger.error("Failed to parse root cause analysis response")
+        return RootCauseAnalysisResult(
+            api_cost_estimate=cost,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            error="Failed to parse LLM response"
+        )
+    
+    # Convert to DifferenceAnalysis objects
+    analyses: list[DifferenceAnalysis] = []
+    root_cause_counts: dict[str, int] = {}
+    
+    for item in analyses_json:
+        try:
+            analysis = DifferenceAnalysis(
+                row_key_str=item.get("row_key", ""),
+                column=item.get("column", ""),
+                tool_value=item.get("tool_value", ""),
+                truth_value=item.get("truth_value", ""),
+                root_cause_category=item.get("root_cause_category", ""),
+                explanation=item.get("explanation", ""),
+                fix_recommendation=item.get("fix_recommendation")
+            )
+            analyses.append(analysis)
+            
+            # Count by category
+            category = analysis.root_cause_category
+            if category:
+                root_cause_counts[category] = root_cause_counts.get(category, 0) + 1
+        
+        except Exception as exc:
+            logger.warning(f"Failed to parse analysis item: {exc}")
+            continue
+    
+    logger.info(
+        f"Root cause analysis complete: {len(analyses)} differences analyzed, "
+        f"cost: ${cost:.4f}"
+    )
+    
+    return RootCauseAnalysisResult(
+        analyses=analyses,
+        root_cause_summary=root_cause_counts,
+        api_cost_estimate=cost,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens
+    )

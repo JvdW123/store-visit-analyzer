@@ -150,6 +150,13 @@ if not api_key:
         "Set ANTHROPIC_API_KEY in .streamlit/secrets.toml to enable LLM cleaning."
     )
 
+st.sidebar.divider()
+show_dev_tools = st.sidebar.checkbox(
+    "🛠️ Developer Tools",
+    value=False,
+    help="Show accuracy testing tools for comparing against ground truth"
+)
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Main area — Title
@@ -889,3 +896,194 @@ if (
             
         except Exception as exc:
             st.error(f"Error reading corrected file: {exc}")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Developer Tools Section — Accuracy Tester
+# ═══════════════════════════════════════════════════════════════════════════
+
+if show_dev_tools:
+    st.divider()
+    st.header("🛠️ Developer Tools — Accuracy Tester")
+    st.caption(
+        "Compare the tool's output against a ground truth master file to "
+        "measure accuracy and identify systematic errors."
+    )
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        tool_output_file = st.file_uploader(
+            "Tool Output Excel",
+            type=["xlsx"],
+            key="accuracy_tool_output",
+            help="The Excel file produced by this tool"
+        )
+    with col2:
+        ground_truth_file = st.file_uploader(
+            "Ground Truth Excel",
+            type=["xlsx"],
+            key="accuracy_ground_truth",
+            help="Manually verified correct output"
+        )
+    
+    if tool_output_file and ground_truth_file and st.button(
+        "Run Accuracy Test",
+        type="primary",
+        use_container_width=True
+    ):
+        with st.spinner("Running comparison..."):
+            # Import accuracy_tester functions
+            from processing.accuracy_tester import (
+                load_excel_for_comparison,
+                compare_dataframes,
+                prepare_llm_batch,
+                COLUMNS_TO_COMPARE
+            )
+            from processing.llm_cleaner import analyze_differences_for_root_cause
+            
+            try:
+                # Load files
+                tool_df = load_excel_for_comparison(tool_output_file)
+                truth_df = load_excel_for_comparison(ground_truth_file)
+                
+                # Run comparison
+                result = compare_dataframes(tool_df, truth_df, COLUMNS_TO_COMPARE)
+                
+                # Display metrics
+                st.subheader("📊 Accuracy Metrics")
+                
+                metric_cols = st.columns(4)
+                metric_cols[0].metric(
+                    "Overall Accuracy",
+                    f"{result.metrics.overall_accuracy_pct:.1f}%"
+                )
+                metric_cols[1].metric(
+                    "Cells Compared",
+                    f"{result.metrics.total_cells_compared:,}"
+                )
+                metric_cols[2].metric(
+                    "Matches",
+                    f"{result.metrics.matching_cells:,}",
+                    delta=f"{result.metrics.both_blank_cells:,} both blank"
+                )
+                metric_cols[3].metric(
+                    "Differences",
+                    f"{result.metrics.different_cells:,}"
+                )
+                
+                # Per-column accuracy table
+                st.subheader("Per-Column Accuracy")
+                col_accuracy_df = pd.DataFrame({
+                    "Column": list(result.metrics.accuracy_by_column.keys()),
+                    "Accuracy %": [
+                        f"{v:.1f}%" 
+                        for v in result.metrics.accuracy_by_column.values()
+                    ],
+                    "Differences": list(result.metrics.differences_by_column.values())
+                })
+                st.dataframe(col_accuracy_df, use_container_width=True, hide_index=True)
+                
+                # Unmatched rows warnings
+                if result.unmatched_tool_rows or result.unmatched_truth_rows:
+                    st.warning(
+                        f"{len(result.unmatched_tool_rows)} rows in tool output not in ground truth | "
+                        f"{len(result.unmatched_truth_rows)} rows in ground truth not in tool output"
+                    )
+                
+                # Root cause analysis
+                if result.differences and api_key:
+                    st.subheader("🔍 Root Cause Analysis")
+                    with st.spinner("Analyzing differences with Claude Sonnet..."):
+                        # Prepare batch for LLM
+                        llm_batch = prepare_llm_batch(
+                            result.differences,
+                            tool_df,
+                            max_differences=100
+                        )
+                        
+                        # Call LLM for root cause analysis
+                        rca_result = analyze_differences_for_root_cause(
+                            llm_batch,
+                            api_key
+                        )
+                    
+                    if rca_result.error:
+                        st.error(f"Root cause analysis failed: {rca_result.error}")
+                    else:
+                        # Display root cause summary
+                        st.write("**Root Cause Summary:**")
+                        
+                        # Create a more readable category mapping
+                        category_labels = {
+                            "file_reader_error": "File Reader Error",
+                            "column_mapping_error": "Column Mapping Error",
+                            "normalization_rule_error": "Normalization Rule Error",
+                            "llm_inference_error": "LLM Inference Error",
+                            "numeric_conversion_error": "Numeric Conversion Error",
+                            "price_calculation_error": "Price Calculation Error",
+                            "ground_truth_error": "Ground Truth Error"
+                        }
+                        
+                        summary_df = pd.DataFrame({
+                            "Category": [
+                                category_labels.get(cat, cat) 
+                                for cat in rca_result.root_cause_summary.keys()
+                            ],
+                            "Count": list(rca_result.root_cause_summary.values())
+                        })
+                        st.dataframe(summary_df, use_container_width=True, hide_index=True)
+                        
+                        # Display fix recommendations
+                        st.write("**Fix Recommendations:**")
+                        recommendations = [
+                            analysis.fix_recommendation
+                            for analysis in rca_result.analyses
+                            if analysis.fix_recommendation
+                        ]
+                        
+                        if recommendations:
+                            # Deduplicate recommendations
+                            unique_recs = list(set(recommendations))
+                            for rec in unique_recs:
+                                st.markdown(f"- {rec}")
+                        else:
+                            st.info("No specific fix recommendations (all differences may be ground truth errors or require manual review)")
+                        
+                        st.caption(
+                            f"API cost: ${rca_result.api_cost_estimate:.4f} "
+                            f"({rca_result.input_tokens:,} in / {rca_result.output_tokens:,} out tokens)"
+                        )
+                
+                elif result.differences and not api_key:
+                    st.info(
+                        "Configure API key in .streamlit/secrets.toml to enable "
+                        "root cause analysis and fix recommendations."
+                    )
+                
+                # Sample differences (expandable)
+                if result.differences:
+                    with st.expander(f"Sample Differences (first 50 of {len(result.differences)})"):
+                        sample_diffs = result.differences[:50]
+                        diff_df = pd.DataFrame([
+                            {
+                                "Row Key": f"{d.row_key.country}|{d.row_key.city}|{d.row_key.retailer}|{d.row_key.photo}",
+                                "Column": d.column,
+                                "Tool Value": d.tool_value,
+                                "Truth Value": d.truth_value,
+                                "Type": d.difference_type
+                            }
+                            for d in sample_diffs
+                        ])
+                        st.dataframe(diff_df, use_container_width=True, hide_index=True)
+                else:
+                    st.success("✅ Perfect match! No differences found between tool output and ground truth.")
+                
+                # Errors
+                if result.errors:
+                    with st.expander(f"⚠️ Errors ({len(result.errors)})"):
+                        for error in result.errors:
+                            st.text(error)
+                
+            except Exception as exc:
+                st.error(f"Error running accuracy test: {exc}")
+                logger.error("Accuracy test failed", exc_info=True)
