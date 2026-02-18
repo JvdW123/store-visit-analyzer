@@ -269,10 +269,14 @@ def _detect_overlaps(
         key = _build_store_key(new_df.loc[idx])
         new_store_counts[key] = new_store_counts.get(key, 0) + 1
         if key not in new_store_meta:
+            retailer_val = new_df.at[idx, "Retailer"]
+            city_val = new_df.at[idx, "City"]
+            store_format_val = new_df.at[idx, "Store Format"]
+            
             new_store_meta[key] = {
-                "retailer": str(new_df.at[idx, "Retailer"]) if pd.notna(new_df.at[idx, "Retailer"]) else "",
-                "city": str(new_df.at[idx, "City"]) if pd.notna(new_df.at[idx, "City"]) else "",
-                "store_format": str(new_df.at[idx, "Store Format"]) if pd.notna(new_df.at[idx, "Store Format"]) else None,
+                "retailer": str(retailer_val) if pd.notna(retailer_val) else "",
+                "city": str(city_val) if pd.notna(city_val) else "",
+                "store_format": str(store_format_val) if pd.notna(store_format_val) else None,
             }
 
     # Build store → row count for existing data
