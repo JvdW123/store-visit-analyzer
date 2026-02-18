@@ -306,9 +306,15 @@ def _build_store_key(row: pd.Series) -> str:
     Returns:
         Composite key string.
     """
-    retailer = str(row.get("Retailer", "")).strip() if pd.notna(row.get("Retailer")) else ""
-    city = str(row.get("City", "")).strip() if pd.notna(row.get("City")) else ""
-    store_format = str(row.get("Store Format", "")).strip() if pd.notna(row.get("Store Format")) else ""
+    retailer_val = row.get("Retailer", "")
+    retailer = str(retailer_val).strip() if pd.notna(retailer_val) else ""
+    
+    city_val = row.get("City", "")
+    city = str(city_val).strip() if pd.notna(city_val) else ""
+    
+    store_format_val = row.get("Store Format", "")
+    store_format = str(store_format_val).strip() if pd.notna(store_format_val) else ""
+    
     return f"{retailer}|{city}|{store_format}"
 
 
