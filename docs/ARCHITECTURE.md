@@ -48,7 +48,7 @@ store-visit-analyzer/
 │   ├── llm_cleaner.py              # LLM API call for ambiguous items
 │   ├── numeric_converter.py        # Text → number conversions
 │   ├── price_calculator.py         # Price per liter + currency conversion
-│   ├── merger.py                   # Combine files + incremental append + dedup
+│   ├── merger.py                   # Combine files + incremental append
 │   └── quality_checker.py          # Validation + quality report generation
 │
 ├── utils/                          # Shared utilities
@@ -204,7 +204,7 @@ Raw Excel Files
   llm_cleaner.py ──→ Flagged items resolved (if API key provided)
        │
        ▼
-  merger.py ──→ All files combined (+ dedup against existing master)
+  merger.py ──→ All files combined
        │
        ▼
   quality_checker.py ──→ Validation + quality report

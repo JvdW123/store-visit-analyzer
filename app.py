@@ -786,11 +786,6 @@ if (
             ".streamlit/secrets.toml to enable automatic resolution."
         )
 
-    if merge_result and merge_result.duplicate_rows_removed > 0:
-        st.info(
-            f"{merge_result.duplicate_rows_removed} exact duplicate rows were removed."
-        )
-
     if all_errors:
         with st.expander(f"⚠️ Processing Warnings & Errors ({len(all_errors)})"):
             for error_msg in all_errors:

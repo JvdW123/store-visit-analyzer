@@ -138,7 +138,7 @@ Fruity Line conducts store visits across retailers to analyze chilled juice and 
 |---|---------|
 | 1 | All UK stores = GBP regardless of how raw files label price columns |
 | 2 | Shelf Location normalization is LLM-driven (high variability makes deterministic rules brittle) |
-| 3 | Deduplication at store visit level: Retailer + City + Store Format. On overlap, user chooses replace or skip |
+| 3 | Store overlap detection: Retailer + City + Store Format. On overlap, user chooses replace or skip |
 | 4 | Product Name left blank if not in source data |
 | 5 | Merged section metadata overrides per-row values when per-row is blank |
 | 6 | Exchange rate auto-fetched from API, pre-filled in UI, user can override. Fallback to hardcoded default |
@@ -154,7 +154,7 @@ Fruity Line conducts store visits across retailers to analyze chilled juice and 
 | 2 | Filename parsing & column mapping | Correctly parse all test filenames and map columns |
 | 3 | Deterministic normalization & numeric conversion | Known values normalize correctly, numbers convert, prices recalculate |
 | 4 | LLM integration | Edge cases resolved, Juice Extraction Method inferred |
-| 5 | Merge, dedup & quality report | Combining works, append deduplicates, report is accurate |
+| 5 | Merge & quality report | Combining works, report is accurate |
 | 6 | Streamlit UI | End-to-end: upload → process → preview → download |
 | 7 | Output formatting & polish | Client-ready Excel output |
 

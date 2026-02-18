@@ -2,7 +2,7 @@
 Merger — combines multiple cleaned DataFrames into one consolidated dataset.
 
 Supports two modes:
-  1. Fresh merge: concatenate all new DataFrames, remove exact duplicates.
+  1. Fresh merge: concatenate all new DataFrames.
   2. Incremental append: detect store-level overlaps against an existing
      master DataFrame, return overlap info for the UI to ask the user
      replace/skip, and apply the user's decisions.
@@ -27,29 +27,6 @@ logger = logging.getLogger(__name__)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# SKU Identifier for Deduplication
-# ═══════════════════════════════════════════════════════════════════════════
-
-# Columns that uniquely identify a SKU observation.
-# Two rows are duplicates if ALL these columns match.
-SKU_IDENTIFIER_COLUMNS: list[str] = [
-    # Store identification (location context)
-    "Country",
-    "City",
-    "Retailer",
-    "Store Format",
-    "Store Name",
-    "Shelf Location",
-    "Shelf Level",
-    # Product identification (what was observed)
-    "Brand",
-    "Product Name",
-    "Packaging Size (ml)",
-    "Price (Local Currency)",
-]
-
-
-# ═══════════════════════════════════════════════════════════════════════════
 # Data classes
 # ═══════════════════════════════════════════════════════════════════════════
 
@@ -71,7 +48,6 @@ class MergeResult:
     dataframe: pd.DataFrame = field(default_factory=pd.DataFrame)
     overlaps: list[StoreOverlap] = field(default_factory=list)
     total_rows: int = 0
-    duplicate_rows_removed: int = 0
     source_file_counts: dict[str, int] = field(default_factory=dict)
 
 
@@ -91,8 +67,7 @@ def merge_dataframes(
       1. Filter out empty DataFrames.
       2. Normalize all to MASTER_COLUMNS ordering (add missing columns as NaN).
       3. Concatenate all new DataFrames.
-      4. Remove exact duplicate rows.
-      5. If existing_master is provided, detect store-level overlaps.
+      4. If existing_master is provided, detect store-level overlaps.
 
     Args:
         dataframes: List of cleaned DataFrames (one per file).
@@ -129,10 +104,7 @@ def merge_dataframes(
     # Step 3: Concatenate
     combined = pd.concat(normalized_dfs, ignore_index=True)
 
-    # Step 4: Remove exact duplicates (excluding internal columns)
-    combined, duplicates_removed = _remove_exact_duplicates(combined)
-
-    # Step 5: Detect overlaps if existing master is provided
+    # Step 4: Detect overlaps if existing master is provided
     overlaps: list[StoreOverlap] = []
     if existing_master is not None and not existing_master.empty:
         overlaps = _detect_overlaps(combined, existing_master)
@@ -141,14 +113,13 @@ def merge_dataframes(
 
     logger.info(
         f"Merge complete: {total_rows} total rows from {len(valid_pairs)} files, "
-        f"{duplicates_removed} duplicates removed, {len(overlaps)} store overlaps"
+        f"{len(overlaps)} store overlaps"
     )
 
     return MergeResult(
         dataframe=combined,
         overlaps=overlaps,
         total_rows=total_rows,
-        duplicate_rows_removed=duplicates_removed,
         source_file_counts=file_counts,
     )
 
@@ -248,49 +219,6 @@ def _normalize_columns(dataframe: pd.DataFrame) -> pd.DataFrame:
     extra_cols = [c for c in df.columns if c not in MASTER_COLUMNS]
     ordered_cols = MASTER_COLUMNS + extra_cols
     return df[ordered_cols]
-
-
-def _remove_exact_duplicates(
-    dataframe: pd.DataFrame,
-) -> tuple[pd.DataFrame, int]:
-    """
-    Remove duplicate SKU observations.
-    
-    Two rows are considered duplicates if they have identical values for:
-    - Store location: Country, City, Retailer, Store Format, Store Name, 
-      Shelf Location, Shelf Level
-    - Product identity: Brand, Product Name, Packaging Size (ml), 
-      Price (Local Currency)
-    
-    This means:
-    - Same product at different prices = different observations (kept)
-    - Same product in different shelf locations = different observations (kept)
-    - Same product on different shelf levels = different observations (kept)
-    - Same product with different photos/facings/notes = duplicate (removed)
-
-    Args:
-        dataframe: Input DataFrame.
-
-    Returns:
-        (deduplicated_df, count_of_removed_rows)
-    """
-    original_count = len(dataframe)
-
-    # Use only SKU identifier columns for duplicate detection
-    sku_cols_present = [c for c in SKU_IDENTIFIER_COLUMNS if c in dataframe.columns]
-    
-    # Remove duplicates, keeping first occurrence
-    deduped = dataframe.drop_duplicates(subset=sku_cols_present, keep="first")
-    deduped = deduped.reset_index(drop=True)
-
-    removed = original_count - len(deduped)
-    if removed > 0:
-        logger.info(
-            f"Removed {removed} duplicate SKU observations "
-            f"(same product at same price in same location)"
-        )
-
-    return deduped, removed
 
 
 def _build_store_key(row: pd.Series) -> str:

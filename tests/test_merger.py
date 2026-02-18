@@ -1,8 +1,8 @@
 """
 Tests for processing/merger.py
 
-Covers: fresh merge, deduplication, overlap detection, replace/skip
-decisions, empty input handling, and column normalization.
+Covers: fresh merge, overlap detection, replace/skip decisions,
+empty input handling, and column normalization.
 """
 
 import pandas as pd
@@ -69,26 +69,6 @@ class TestFreshMerge:
         assert "Country" in result.dataframe.columns
         assert "Currency" in result.dataframe.columns
         assert "Price (EUR)" in result.dataframe.columns
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# Deduplication
-# ═══════════════════════════════════════════════════════════════════════════
-
-class TestDeduplication:
-    def test_exact_duplicates_removed(self):
-        df1 = _make_store_df("Tesco", "London", rows=2)
-        df2 = df1.copy()  # Exact duplicate
-        result = merge_dataframes([df1, df2], ["f1.xlsx", "f2.xlsx"])
-        assert result.duplicate_rows_removed == 2
-        assert result.total_rows == 2
-
-    def test_non_duplicates_kept(self):
-        df1 = _make_store_df("Tesco", "London", rows=2)
-        df2 = _make_store_df("Sainsburys", "Manchester", rows=2)
-        result = merge_dataframes([df1, df2], ["f1.xlsx", "f2.xlsx"])
-        assert result.duplicate_rows_removed == 0
-        assert result.total_rows == 4
 
 
 # ═══════════════════════════════════════════════════════════════════════════

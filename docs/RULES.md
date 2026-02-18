@@ -60,8 +60,7 @@ STEP 3 — DETERMINISTIC (no LLM, instant)
 | 14 | Price per Liter recalculation | **Code only** | — | Pure math |
 | 15 | Currency conversion | **Code only** | — | Multiplication by exchange rate |
 | 16 | Confidence Score normalization | **Code only** | — | Rule-based scale detection |
-| 17 | Deduplication | **Code only** | — | Composite key matching |
-| 18 | Quality report generation | **Code only** | — | Counting and validation |
+| 17 | Quality report generation | **Code only** | — | Counting and validation |
 
 **LLM model:** Claude Sonnet (claude-sonnet-4-20250514) — hardcoded, no user choice in UI.
 **LLM calls:** Steps 5 (fallback), 7, 8, 9, 10, 11, 12 (confirmation) are ALL batched into one single API call per file.
