@@ -1,9 +1,9 @@
 """
-Streamlit entry point — Store Visit Analyzer UI.
+Streamlit entry point — Store Visit Analyzer UI (Tool A: Data Consolidation).
 
-Wires together the full processing pipeline with a 7-step user flow:
+Wires together the full processing pipeline with a 6-step user flow:
   1. Sidebar settings (exchange rate)
-  2. File upload (raw Excel + optional existing master)
+  2. File upload (raw Excel files)
   3. Per-file metadata form (Country, City, Retailer, Store Name, Format)
   4. Per-file processing with progress bar
   5. Merge + overlap resolution dialog
@@ -165,7 +165,7 @@ show_dev_tools = st.sidebar.checkbox(
 # ═══════════════════════════════════════════════════════════════════════════
 
 st.title("📊 Store Visit Analyzer")
-st.caption("Data Consolidation & Cleaning Tool — upload raw shelf analysis Excel files to produce a clean master dataset.")
+st.caption("Data Consolidation & Cleaning Tool — upload raw shelf analysis Excel files to produce a clean, consolidated master dataset.")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -174,23 +174,12 @@ st.caption("Data Consolidation & Cleaning Tool — upload raw shelf analysis Exc
 
 st.header("📁 Upload Files")
 
-upload_col1, upload_col2 = st.columns(2)
-
-with upload_col1:
-    raw_files = st.file_uploader(
-        "Raw Excel files",
-        type=["xlsx"],
-        accept_multiple_files=True,
-        help="Drag and drop one or more raw store visit Excel files.",
-    )
-
-with upload_col2:
-    existing_master_file = st.file_uploader(
-        "Existing master file (optional)",
-        type=["xlsx"],
-        accept_multiple_files=False,
-        help="Upload a previously generated master file to append new data.",
-    )
+raw_files = st.file_uploader(
+    "Raw Excel files",
+    type=["xlsx"],
+    accept_multiple_files=True,
+    help="Drag and drop one or more raw store visit Excel files.",
+)
 
 # Reset downstream state when the uploaded files change
 if raw_files != st.session_state.get("_prev_raw_files"):
@@ -564,25 +553,10 @@ if (
             with status_container.container():
                 st.text("Merging all processed files...")
 
-            # Load existing master if provided
-            existing_master_df = None
-            if existing_master_file is not None:
-                try:
-                    existing_master_df = pd.read_excel(
-                        existing_master_file, sheet_name="SKU Data"
-                    )
-                except Exception:
-                    try:
-                        existing_master_df = pd.read_excel(existing_master_file)
-                    except Exception as exc:
-                        all_errors.append(
-                            f"Could not read existing master: {exc}"
-                        )
-
+            # Merge all processed dataframes
             merge_result = merge_dataframes(
                 processed_dataframes,
                 source_filenames,
-                existing_master=existing_master_df,
             )
 
             # Save results to session state
@@ -594,19 +568,10 @@ if (
             st.session_state["source_files_info"] = source_files_info
             st.session_state["llm_resolved_count"] = llm_resolved_count
             st.session_state["llm_skipped"] = llm_skipped
-            st.session_state["_existing_master_df"] = existing_master_df
 
             # If no overlaps, go straight to quality check
             if not merge_result.overlaps:
-                if existing_master_df is not None and not existing_master_df.empty:
-                    final_df = pd.concat(
-                        [existing_master_df, merge_result.dataframe],
-                        ignore_index=True,
-                    )
-                else:
-                    final_df = merge_result.dataframe
-
-                st.session_state["final_dataframe"] = final_df
+                st.session_state["final_dataframe"] = merge_result.dataframe
                 st.session_state["overlap_decisions_applied"] = True
 
             st.session_state["processing_complete"] = True
@@ -664,9 +629,8 @@ if (
             decisions[store_key] = choice.lower()
 
     if st.button("Apply Decisions", type="primary", use_container_width=True):
-        existing_master_df = st.session_state.get("_existing_master_df")
         final_df = apply_overlap_decisions(
-            merge_result.dataframe, existing_master_df, decisions
+            merge_result.dataframe, None, decisions
         )
         st.session_state["final_dataframe"] = final_df
         st.session_state["overlap_decisions"] = decisions
