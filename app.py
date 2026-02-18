@@ -52,6 +52,67 @@ st.set_page_config(
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# Password protection (runs FIRST, before any content)
+# ═══════════════════════════════════════════════════════════════════════════
+
+def check_password() -> bool:
+    """
+    Password protection gate.
+    
+    Returns True if user is authenticated or if no password is set (local dev).
+    Returns False and shows login form if authentication is required but not completed.
+    
+    This function MUST be called at the very top of the app to protect all content.
+    """
+    # Get password from secrets (None if not set = local dev mode, no protection)
+    correct_password = st.secrets.get("APP_PASSWORD", None)
+    
+    # If no password is configured, skip protection (local development)
+    if correct_password is None:
+        return True
+    
+    # Check if user is already authenticated
+    if st.session_state.get("authenticated", False):
+        return True
+    
+    # Show login form
+    st.title("🔒 Store Visit Analyzer")
+    st.markdown("### Please enter the password to access the application")
+    
+    # Create a form for better UX
+    with st.form("login_form"):
+        password_input = st.text_input(
+            "Password",
+            type="password",
+            placeholder="Enter password",
+            help="Contact your administrator if you don't have the password"
+        )
+        submit_button = st.form_submit_button("Login", use_container_width=True)
+    
+    # Check password when form is submitted
+    if submit_button:
+        if password_input == correct_password:
+            st.session_state.authenticated = True
+            st.success("✅ Authentication successful! Loading application...")
+            st.rerun()
+        else:
+            st.error("❌ Incorrect password. Please try again.")
+            return False
+    
+    # If we reach here, user hasn't logged in yet
+    st.info("👆 Enter the password above to continue")
+    return False
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# AUTHENTICATION GATE - Must pass before any content loads
+# ═══════════════════════════════════════════════════════════════════════════
+
+if not check_password():
+    st.stop()  # Prevent any content from loading
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # Exchange rate helper
 # ═══════════════════════════════════════════════════════════════════════════
 
