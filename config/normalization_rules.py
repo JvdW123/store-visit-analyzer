@@ -150,7 +150,58 @@ SHELF_LOCATION_MAP: dict[str, str] = {
     "to-go section — shots": "To-Go Section — Shots",
     "to-go section - shots": "To-Go Section — Shots",
     "meal deal section": "Meal Deal Section",
+    # Additional variations for better coverage
+    "chilled section fridge 1": "Chilled Section",
+    "chilled section fridge 2": "Chilled Section",
+    "chilled fridge": "Chilled Section",
+    "chilled drinks": "Chilled Section",
+    "main chilled section": "Chilled Section",
+    "to go section": "To-Go Section",
+    "to-go": "To-Go Section",
+    "to go": "To-Go Section",
+    "togo section": "To-Go Section",
+    "to-go section shots": "To-Go Section — Shots",
+    "to go shots": "To-Go Section — Shots",
+    "shots section": "To-Go Section — Shots",
+    "shots display": "To-Go Section — Shots",
+    "meal deal": "Meal Deal Section",
+    "meal deal area": "Meal Deal Section",
 }
+
+
+def normalize_shelf_location_substring(value: str) -> str | None:
+    """
+    Fallback normalization using substring matching for Shelf Location.
+    
+    Applied when exact lookup fails. Uses keyword detection to map
+    variations to canonical values.
+    
+    Args:
+        value: Raw shelf location string (already lowercased and stripped).
+    
+    Returns:
+        Canonical shelf location or None if no match.
+    """
+    value_lower = value.lower()
+    
+    # Check for "shots" first (more specific)
+    if "shot" in value_lower and ("to-go" in value_lower or "to go" in value_lower or "togo" in value_lower):
+        return "To-Go Section — Shots"
+    
+    # Check for general to-go section
+    if "to-go" in value_lower or "to go" in value_lower or "togo" in value_lower:
+        return "To-Go Section"
+    
+    # Check for chilled section
+    if "chill" in value_lower:
+        return "Chilled Section"
+    
+    # Check for meal deal
+    if "meal" in value_lower and "deal" in value_lower:
+        return "Meal Deal Section"
+    
+    return None
+
 
 # ---------------------------------------------------------------------------
 # Flavor — Post-extraction normalization.

@@ -81,6 +81,22 @@ COLUMN-SPECIFIC INSTRUCTIONS:
   - If the product is labelled "pure juice" without further context, it is
     likely "Squeezed" or "From Concentrate" — use brand to disambiguate.
   - Only return blank if you truly cannot determine with reasonable confidence.
+- Shelf Location: Use ONLY the original Shelf Location value to determine 
+  the correct normalized value. Do NOT infer from Brand, Product Type, or 
+  other row data. Look for keywords in the original value:
+  - Contains "chill" → "Chilled Section"
+  - Contains "to-go" or "to go" and "shot" → "To-Go Section — Shots"
+  - Contains "to-go" or "to go" → "To-Go Section"
+  - Contains "meal deal" → "Meal Deal Section"
+  
+  Valid values: "Chilled Section", "To-Go Section", "To-Go Section — Shots", "Meal Deal Section"
+  
+  Examples:
+    "Chilled Section - Fridge 1" → "Chilled Section"
+    "To-Go Fridge" → "To-Go Section"
+    "Shots Display" → "To-Go Section — Shots"
+    "Meal Deal Area" → "Meal Deal Section"
+    "Main Beverage Aisle" → "Chilled Section" (if contains chill-related keywords)
 - Flavor: Extract ALL flavor/fruit/ingredient components from the Product Name.
   Include every flavor-relevant ingredient mentioned, joined with " & ".
   Always use " & " as the separator (not "/", "and", or comma-only).

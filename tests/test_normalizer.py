@@ -228,13 +228,23 @@ class TestShelfLocationNormalization:
         result = normalize(df)
         assert result.dataframe.at[0, "Shelf Location"] == "Chilled Section"
 
-    def test_non_exact_match_flagged(self):
+    def test_non_exact_match_substring_normalized(self):
+        # Test that substring matching works for Shelf Location
         df = _make_df({"Shelf Location": "Front of store chiller"})
+        result = normalize(df)
+        # Should be normalized via substring matching (contains "chill")
+        assert result.dataframe.at[0, "Shelf Location"] == "Chilled Section"
+        # Should NOT be flagged
+        loc_flagged = [f for f in result.flagged_items if f.column == "Shelf Location"]
+        assert len(loc_flagged) == 0
+    
+    def test_ambiguous_shelf_location_flagged(self):
+        # Test that truly ambiguous values still get flagged
+        df = _make_df({"Shelf Location": "Back room storage"})
         result = normalize(df)
         loc_flagged = [f for f in result.flagged_items if f.column == "Shelf Location"]
         assert len(loc_flagged) == 1
-        assert loc_flagged[0].original_value == "Front of store chiller"
-        assert loc_flagged[0].reason == "'Front of store chiller' not in allowed values for Shelf Location"
+        assert loc_flagged[0].original_value == "Back room storage"
 
 
 # ═══════════════════════════════════════════════════════════════════════════

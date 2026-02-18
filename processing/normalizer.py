@@ -84,11 +84,13 @@ _CONTEXT_COLUMNS: list[str] = [
 def normalize(dataframe: pd.DataFrame) -> NormalizationResult:
     """
     Apply all deterministic lookup tables to categorical columns.
-
-    For each column listed in COLUMN_TO_RULE_MAP, normalizes known values
-    and flags unknown values for LLM review.  Then applies cross-column
-    rules (HPP → Processing Method).  Finally, flags Juice Extraction
-    Method values for LLM inference.
+    
+    NEW ORDER (to preserve Processing Method keywords for Juice Extraction inference):
+    1. Normalize HPP Treatment first (Juice Extraction inference depends on it)
+    2. Infer Juice Extraction Method (sees normalized HPP, raw Processing Method)
+    3. Normalize remaining columns including Processing Method
+    4. Apply cross-column rules
+    5. Flag missing Flavors
 
     Args:
         dataframe: DataFrame with columns already mapped to master schema
@@ -102,8 +104,34 @@ def normalize(dataframe: pd.DataFrame) -> NormalizationResult:
     all_flagged: list[FlaggedItem] = []
     all_changes: list[dict] = []
 
-    # Step 1: Normalize each categorical column via its lookup table
+    # ═══════════════════════════════════════════════════════════════
+    # PHASE 1: Normalize ONLY HPP Treatment (Juice Extraction depends on it)
+    # ═══════════════════════════════════════════════════════════════
+    if "HPP Treatment" in result_df.columns:
+        lookup_table = COLUMN_TO_RULE_MAP.get("HPP Treatment")
+        if lookup_table:
+            column_flagged, column_changes = _normalize_column(
+                result_df, "HPP Treatment", lookup_table
+            )
+            all_flagged.extend(column_flagged)
+            all_changes.extend(column_changes)
+
+    # ═══════════════════════════════════════════════════════════════
+    # PHASE 2: Infer Juice Extraction Method
+    # (sees normalized HPP Treatment, raw Processing Method with keywords intact)
+    # ═══════════════════════════════════════════════════════════════
+    jem_flagged, jem_changes = _infer_juice_extraction_method(result_df)
+    all_flagged.extend(jem_flagged)
+    all_changes.extend(jem_changes)
+
+    # ═══════════════════════════════════════════════════════════════
+    # PHASE 3: Normalize remaining columns (including Processing Method)
+    # ═══════════════════════════════════════════════════════════════
     for column_name, lookup_table in COLUMN_TO_RULE_MAP.items():
+        # Skip HPP Treatment (already normalized in Phase 1)
+        if column_name == "HPP Treatment":
+            continue
+        
         if column_name not in result_df.columns:
             continue
 
@@ -113,24 +141,21 @@ def normalize(dataframe: pd.DataFrame) -> NormalizationResult:
         all_flagged.extend(column_flagged)
         all_changes.extend(column_changes)
 
-    # Step 2: Cross-column rule — HPP Treatment + Processing Method
+    # ═══════════════════════════════════════════════════════════════
+    # PHASE 4: Cross-column rule (HPP Treatment → Processing Method)
+    # ═══════════════════════════════════════════════════════════════
     cross_changes = _apply_cross_column_rules(result_df)
     all_changes.extend(cross_changes)
 
-    # Step 3: Flag LLM-only columns (currently empty after Juice Extraction
-    # Method moved to deterministic-first inference)
+    # ═══════════════════════════════════════════════════════════════
+    # PHASE 5: Flag LLM-only columns and missing Flavors
+    # ═══════════════════════════════════════════════════════════════
     for column_name in LLM_ONLY_COLUMNS:
         if column_name not in result_df.columns:
             continue
         llm_flagged = _flag_llm_only_column(result_df, column_name)
         all_flagged.extend(llm_flagged)
 
-    # Step 4: Infer Juice Extraction Method deterministically, flag remainder
-    jem_flagged, jem_changes = _infer_juice_extraction_method(result_df)
-    all_flagged.extend(jem_flagged)
-    all_changes.extend(jem_changes)
-
-    # Step 5: Flag rows with Product Name but no Flavor for LLM extraction
     flavor_flagged = _flag_missing_flavor(result_df)
     all_flagged.extend(flavor_flagged)
 
@@ -212,7 +237,22 @@ def _normalize_column(
                     })
 
         else:
-            # Value not in lookup → flag for LLM review
+            # Try substring matching for Shelf Location before flagging
+            if column == "Shelf Location":
+                from config.normalization_rules import normalize_shelf_location_substring
+                substring_match = normalize_shelf_location_substring(original_str)
+                if substring_match is not None:
+                    dataframe.at[idx, column] = substring_match
+                    changes.append({
+                        "row": idx,
+                        "column": column,
+                        "original": original_str,
+                        "normalized": substring_match,
+                        "method": "deterministic (substring match)",
+                    })
+                    continue
+            
+            # Value not in lookup and no substring match → flag for LLM review
             context = _build_context(dataframe, idx)
             flagged.append(FlaggedItem(
                 row_index=idx,
@@ -335,6 +375,10 @@ def _infer_juice_extraction_method(
     """
     Apply deterministic rules to infer Juice Extraction Method, then flag
     remaining blank rows for LLM.
+    
+    IMPORTANT: This function runs BEFORE Processing Method normalization,
+    so it can see raw values like "Cold-Pressed" and "Freshly Squeezed"
+    that would otherwise be converted to blank.
 
     Rules (applied in order, first match wins per row):
       1. HPP Treatment == "Yes"                       → "Cold Pressed"

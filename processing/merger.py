@@ -27,6 +27,29 @@ logger = logging.getLogger(__name__)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# SKU Identifier for Deduplication
+# ═══════════════════════════════════════════════════════════════════════════
+
+# Columns that uniquely identify a SKU observation.
+# Two rows are duplicates if ALL these columns match.
+SKU_IDENTIFIER_COLUMNS: list[str] = [
+    # Store identification (location context)
+    "Country",
+    "City",
+    "Retailer",
+    "Store Format",
+    "Store Name",
+    "Shelf Location",
+    "Shelf Level",
+    # Product identification (what was observed)
+    "Brand",
+    "Product Name",
+    "Packaging Size (ml)",
+    "Price (Local Currency)",
+]
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # Data classes
 # ═══════════════════════════════════════════════════════════════════════════
 
@@ -231,11 +254,19 @@ def _remove_exact_duplicates(
     dataframe: pd.DataFrame,
 ) -> tuple[pd.DataFrame, int]:
     """
-    Remove exact duplicate rows (matching on all master columns).
-
-    Internal columns (prefixed with "_") are excluded from duplicate
-    detection — two rows are considered duplicates even if they came
-    from different source rows.
+    Remove duplicate SKU observations.
+    
+    Two rows are considered duplicates if they have identical values for:
+    - Store location: Country, City, Retailer, Store Format, Store Name, 
+      Shelf Location, Shelf Level
+    - Product identity: Brand, Product Name, Packaging Size (ml), 
+      Price (Local Currency)
+    
+    This means:
+    - Same product at different prices = different observations (kept)
+    - Same product in different shelf locations = different observations (kept)
+    - Same product on different shelf levels = different observations (kept)
+    - Same product with different photos/facings/notes = duplicate (removed)
 
     Args:
         dataframe: Input DataFrame.
@@ -245,14 +276,19 @@ def _remove_exact_duplicates(
     """
     original_count = len(dataframe)
 
-    # Use only master columns for duplicate detection
-    master_cols_present = [c for c in MASTER_COLUMNS if c in dataframe.columns]
-    deduped = dataframe.drop_duplicates(subset=master_cols_present, keep="first")
+    # Use only SKU identifier columns for duplicate detection
+    sku_cols_present = [c for c in SKU_IDENTIFIER_COLUMNS if c in dataframe.columns]
+    
+    # Remove duplicates, keeping first occurrence
+    deduped = dataframe.drop_duplicates(subset=sku_cols_present, keep="first")
     deduped = deduped.reset_index(drop=True)
 
     removed = original_count - len(deduped)
     if removed > 0:
-        logger.info(f"Removed {removed} exact duplicate rows")
+        logger.info(
+            f"Removed {removed} duplicate SKU observations "
+            f"(same product at same price in same location)"
+        )
 
     return deduped, removed
 
