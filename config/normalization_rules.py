@@ -59,9 +59,11 @@ PROCESSING_METHOD_MAP: dict[str, str] = {
     "cold-pressed": "",       # blank — informs Juice Extraction Method, not Processing Method
     "cold pressed": "",       # blank — informs Juice Extraction Method, not Processing Method
     "pressed": "",            # blank — informs Juice Extraction Method, not Processing Method
-    "unpasteurised": "",      # blank — removed as Processing Method value
-    "unpasteurized": "",      # blank — removed as Processing Method value
-    "not pasteurised": "",    # blank — removed as Processing Method value
+    "unpasteurised": "Raw",   # Raw (no heat treatment)
+    "unpasteurized": "Raw",   # Raw (no heat treatment)
+    "not pasteurised": "Raw", # Raw (no heat treatment)
+    "not pasteurized": "Raw", # Raw (no heat treatment)
+    "raw": "Raw",             # Raw (no heat treatment)
     "freshly squeezed": "",   # blank — informs Juice Extraction Method, not Processing Method
     "hpp": "HPP",
     "hpp treated": "HPP",

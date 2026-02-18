@@ -55,23 +55,25 @@ MASTER SCHEMA VALID VALUES:
 - Product Type: "Pure Juices", "Smoothies", "Shots", "Other"
 - Need State: "Indulgence", "Functional"
 - Branded/Private Label: "Branded", "Private Label"
-- Processing Method: "Pasteurized", "HPP"
+- Processing Method: "Pasteurized", "HPP", "Raw"
 - HPP Treatment: "Yes", "No"
 - Packaging Type: "PET Bottle", "Tetra Pak", "Can", "Carton", "Glass Bottle"
-- Juice Extraction Method: "Squeezed", "Cold Pressed", "From Concentrate"
+- Juice Extraction Method: "Squeezed", "Cold Pressed", "From Concentrate", "NA/Centrifugal"
 - Stock Status: "In Stock", "Out of Stock"
 - Shelf Level: "1st", "2nd", "3rd", "4th", "5th", "6th"
 - Shelf Location: "Chilled Section", "To-Go Section", "To-Go Section — Shots", "Meal Deal Section"
 - Flavor: free text (extract from Product Name)
 
 COLUMN-SPECIFIC INSTRUCTIONS:
-- Processing Method: determine if the product is "Pasteurized" or "HPP" based
-  on Claims, Notes, and Brand. If you cannot determine, return blank.
+- Processing Method: determine if the product is "Pasteurized", "HPP", or "Raw" based
+  on Claims, Notes, and Brand. "Raw" indicates unpasteurized/no heat treatment.
+  If you cannot determine, return blank.
 - Juice Extraction Method: consider the full row context — Brand, Sub-brand,
   Product Name, Claims, Notes, Processing Method, HPP Treatment. The Sub-brand
   may contain processing terminology (e.g. "Freshly Squeezed", "Cold Pressed").
   Claims mentioning "not from concentrate" indicate "Squeezed" (NOT "From
-  Concentrate"). Valid values: "Cold Pressed", "Squeezed", "From Concentrate".
+  Concentrate"). Valid values: "Cold Pressed", "Squeezed", "From Concentrate", 
+  "NA/Centrifugal" (use "NA/Centrifugal" as default for unclear pasteurized products).
 
   INFERENCE HEURISTIC (use when no explicit indicators exist):
   - If Processing Method is "Pasteurized" and no cold-press or squeeze

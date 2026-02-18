@@ -105,10 +105,11 @@ VALID_VALUES: dict[str, set[str]] = {
     "Product Type": {"Pure Juices", "Smoothies", "Shots", "Other"},
     "Branded/Private Label": {"Branded", "Private Label"},
     "Need State": {"Indulgence", "Functional"},
-    "Juice Extraction Method": {"Squeezed", "Cold Pressed", "From Concentrate"},
+    "Juice Extraction Method": {"Squeezed", "Cold Pressed", "From Concentrate", "NA/Centrifugal"},
     "Processing Method": {
         "Pasteurized",
         "HPP",
+        "Raw",
     },
     "HPP Treatment": {"Yes", "No"},
     "Packaging Type": {"PET Bottle", "Tetra Pak", "Can", "Carton", "Glass Bottle"},

@@ -151,11 +151,29 @@ class TestProcessingMethodNormalization:
         result = normalize(df)
         assert pd.isna(result.dataframe.at[0, "Processing Method"])
 
-    def test_unpasteurised_maps_to_blank(self):
-        """Unpasteurised maps to blank — removed as Processing Method value."""
+    def test_unpasteurised_maps_to_raw(self):
+        """Unpasteurised maps to Raw."""
         df = _make_df({"Processing Method": "Unpasteurised"})
         result = normalize(df)
-        assert pd.isna(result.dataframe.at[0, "Processing Method"])
+        assert result.dataframe.at[0, "Processing Method"] == "Raw"
+    
+    def test_unpasteurized_maps_to_raw(self):
+        """Unpasteurized (US spelling) maps to Raw."""
+        df = _make_df({"Processing Method": "Unpasteurized"})
+        result = normalize(df)
+        assert result.dataframe.at[0, "Processing Method"] == "Raw"
+    
+    def test_not_pasteurized_maps_to_raw(self):
+        """Not pasteurized maps to Raw."""
+        df = _make_df({"Processing Method": "Not pasteurized"})
+        result = normalize(df)
+        assert result.dataframe.at[0, "Processing Method"] == "Raw"
+    
+    def test_raw_maps_to_raw(self):
+        """Raw maps to Raw (canonical form)."""
+        df = _make_df({"Processing Method": "raw"})
+        result = normalize(df)
+        assert result.dataframe.at[0, "Processing Method"] == "Raw"
 
     def test_unknown_maps_to_blank(self):
         df = _make_df({"Processing Method": "Unknown"})
@@ -330,8 +348,8 @@ class TestJuiceExtractionMethodInference:
         result = normalize(df)
         assert result.dataframe.at[0, "Juice Extraction Method"] == "Squeezed"
 
-    def test_no_match_blank_flagged_for_llm(self):
-        """Rule 7: No deterministic match → flagged for LLM."""
+    def test_no_match_defaults_to_na_centrifugal(self):
+        """Rule 8: Pasteurized with no other indicators → NA/Centrifugal (default)."""
         df = _make_df({
             "Juice Extraction Method": None,
             "HPP Treatment": "No",
@@ -339,11 +357,13 @@ class TestJuiceExtractionMethodInference:
             "Claims": "100% organic",
         })
         result = normalize(df)
+        # Should default to NA/Centrifugal and be flagged for review
+        assert result.dataframe.at[0, "Juice Extraction Method"] == "NA/Centrifugal"
         jem_flagged = [
             f for f in result.flagged_items if f.column == "Juice Extraction Method"
         ]
         assert len(jem_flagged) == 1
-        assert jem_flagged[0].reason == "Could not determine Juice Extraction Method from available data"
+        assert "NA/Centrifugal" in jem_flagged[0].reason
 
     def test_valid_value_not_overwritten(self):
         """A value already in VALID_VALUES should not be changed."""
@@ -498,3 +518,225 @@ class TestDataFramePreservation:
         original_value = df.at[0, "Product Type"]
         _ = normalize(df)
         assert df.at[0, "Product Type"] == original_value
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Brand-based inference rules
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestBrandBasedInference:
+    """Test brand-based rules for Juice Extraction Method and Processing Method."""
+    
+    def test_exact_brand_match_sets_both_fields(self):
+        """Tropicana should set Squeezed + Pasteurized."""
+        df = _make_df({"Brand": "Tropicana"})
+        result = normalize(df)
+        assert result.dataframe.at[0, "Juice Extraction Method"] == "Squeezed"
+        assert result.dataframe.at[0, "Processing Method"] == "Pasteurized"
+    
+    def test_cold_pressed_brand_sets_hpp(self):
+        """MOJU should set Cold Pressed + HPP."""
+        df = _make_df({"Brand": "MOJU"})
+        result = normalize(df)
+        assert result.dataframe.at[0, "Juice Extraction Method"] == "Cold Pressed"
+        assert result.dataframe.at[0, "Processing Method"] == "HPP"
+    
+    def test_from_concentrate_brand(self):
+        """Naked should set From Concentrate + Pasteurized."""
+        df = _make_df({"Brand": "Naked"})
+        result = normalize(df)
+        assert result.dataframe.at[0, "Juice Extraction Method"] == "From Concentrate"
+        assert result.dataframe.at[0, "Processing Method"] == "Pasteurized"
+    
+    def test_fuzzy_brand_match_typo(self):
+        """Tropicanna (typo) should still match Tropicana."""
+        df = _make_df({"Brand": "Tropicanna"})
+        result = normalize(df)
+        assert result.dataframe.at[0, "Juice Extraction Method"] == "Squeezed"
+        assert result.dataframe.at[0, "Processing Method"] == "Pasteurized"
+    
+    def test_case_insensitive_brand_match(self):
+        """INNOCENT (uppercase) should match Innocent."""
+        df = _make_df({"Brand": "INNOCENT"})
+        result = normalize(df)
+        assert result.dataframe.at[0, "Juice Extraction Method"] == "Squeezed"
+        assert result.dataframe.at[0, "Processing Method"] == "Pasteurized"
+    
+    def test_brand_with_extra_whitespace(self):
+        """' Tropicana ' should match."""
+        df = _make_df({"Brand": "  Tropicana  "})
+        result = normalize(df)
+        assert result.dataframe.at[0, "Juice Extraction Method"] == "Squeezed"
+    
+    def test_unknown_brand_falls_through(self):
+        """Unknown brand should not match, falls to other rules."""
+        df = _make_df({
+            "Brand": "Unknown Brand XYZ",
+            "Claims": "not from concentrate"
+        })
+        result = normalize(df)
+        # Should use Claims rule, not brand rule
+        assert result.dataframe.at[0, "Juice Extraction Method"] == "Squeezed"
+    
+    def test_brand_overrides_explicit_indicators(self):
+        """Brand rule has highest priority, even if Claims contradict."""
+        df = _make_df({
+            "Brand": "Tropicana",  # Says "Squeezed"
+            "Claims": "from concentrate"  # Contradicts
+        })
+        result = normalize(df)
+        # Brand wins
+        assert result.dataframe.at[0, "Juice Extraction Method"] == "Squeezed"
+        # But conflict should be detected
+        assert len(result.conflicts_log) > 0
+    
+    def test_brand_does_not_overwrite_existing_processing_method(self):
+        """If Processing Method already set, brand doesn't overwrite it."""
+        df = _make_df({
+            "Brand": "Tropicana",
+            "Processing Method": "HPP"  # Already set
+        })
+        result = normalize(df)
+        # Juice Extraction set by brand
+        assert result.dataframe.at[0, "Juice Extraction Method"] == "Squeezed"
+        # Processing Method normalized but not overwritten by brand
+        assert result.dataframe.at[0, "Processing Method"] == "HPP"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Conflict detection
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestBrandConflictDetection:
+    """Test conflict detection when brand mappings contradict explicit indicators."""
+    
+    def test_conflict_extraction_method_from_concentrate(self):
+        """Tropicana + 'from concentrate' in Claims → conflict."""
+        df = _make_df({
+            "Brand": "Tropicana",  # Says "Squeezed"
+            "Claims": "from concentrate"  # Says "From Concentrate"
+        })
+        result = normalize(df)
+        # Brand wins
+        assert result.dataframe.at[0, "Juice Extraction Method"] == "Squeezed"
+        # Conflict detected
+        conflicts = [c for c in result.conflicts_log if c.column == "Juice Extraction Method"]
+        assert len(conflicts) == 1
+        assert conflicts[0].brand_name == "Tropicana"
+        assert conflicts[0].brand_value == "Squeezed"
+        assert conflicts[0].explicit_value == "From Concentrate"
+    
+    def test_conflict_extraction_method_cold_pressed(self):
+        """Naked + 'cold pressed' in Claims → conflict."""
+        df = _make_df({
+            "Brand": "Naked",  # Says "From Concentrate"
+            "Claims": "cold pressed"  # Says "Cold Pressed"
+        })
+        result = normalize(df)
+        # Brand wins
+        assert result.dataframe.at[0, "Juice Extraction Method"] == "From Concentrate"
+        # Conflict detected
+        conflicts = [c for c in result.conflicts_log if c.column == "Juice Extraction Method"]
+        assert len(conflicts) == 1
+        assert "cold pressed" in conflicts[0].explicit_source.lower()
+    
+    def test_conflict_processing_method_hpp(self):
+        """Innocent + HPP Treatment=Yes → conflict."""
+        df = _make_df({
+            "Brand": "Innocent",  # Says "Pasteurized"
+            "HPP Treatment": "Yes"  # Says "HPP"
+        })
+        result = normalize(df)
+        # Brand wins for extraction method
+        assert result.dataframe.at[0, "Juice Extraction Method"] == "Squeezed"
+        # Conflicts detected (both extraction and processing)
+        assert len(result.conflicts_log) >= 1
+        proc_conflicts = [c for c in result.conflicts_log if c.column == "Processing Method"]
+        assert len(proc_conflicts) == 1
+    
+    def test_no_conflict_when_aligned(self):
+        """Tropicana + 'not from concentrate' → no conflict."""
+        df = _make_df({
+            "Brand": "Tropicana",  # Says "Squeezed"
+            "Claims": "not from concentrate"  # Also says "Squeezed"
+        })
+        result = normalize(df)
+        assert result.dataframe.at[0, "Juice Extraction Method"] == "Squeezed"
+        # No conflicts
+        assert len(result.conflicts_log) == 0
+    
+    def test_multiple_conflicts_same_row(self):
+        """Both extraction and processing method can conflict."""
+        df = _make_df({
+            "Brand": "MOJU",  # Says "Cold Pressed" + "HPP"
+            "Claims": "from concentrate",  # Contradicts extraction
+            "Processing Method": "Pasteurized"  # Contradicts processing
+        })
+        result = normalize(df)
+        # Brand wins
+        assert result.dataframe.at[0, "Juice Extraction Method"] == "Cold Pressed"
+        # Multiple conflicts
+        assert len(result.conflicts_log) >= 1
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# NA/Centrifugal default rule
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestNACentrifugalDefault:
+    """Test default NA/Centrifugal rule for pasteurized products."""
+    
+    def test_pasteurized_defaults_to_na_centrifugal(self):
+        """Pasteurized product with no other indicators → NA/Centrifugal and flagged."""
+        df = _make_df({"Processing Method": "Pasteurized"})
+        result = normalize(df)
+        assert result.dataframe.at[0, "Juice Extraction Method"] == "NA/Centrifugal"
+        # Should be flagged for manual review
+        jem_flagged = [f for f in result.flagged_items if f.column == "Juice Extraction Method"]
+        assert len(jem_flagged) == 1
+        assert "NA/Centrifugal" in jem_flagged[0].reason
+    
+    def test_pasteurised_uk_spelling(self):
+        """Pasteurised (UK spelling) also defaults to NA/Centrifugal and flagged."""
+        df = _make_df({"Processing Method": "Pasteurised"})
+        result = normalize(df)
+        assert result.dataframe.at[0, "Juice Extraction Method"] == "NA/Centrifugal"
+        # Should be flagged
+        jem_flagged = [f for f in result.flagged_items if f.column == "Juice Extraction Method"]
+        assert len(jem_flagged) == 1
+    
+    def test_flash_pasteurized_defaults(self):
+        """Flash pasteurized → NA/Centrifugal and flagged."""
+        df = _make_df({"Processing Method": "Flash Pasteurized"})
+        result = normalize(df)
+        assert result.dataframe.at[0, "Juice Extraction Method"] == "NA/Centrifugal"
+        # Should be flagged
+        jem_flagged = [f for f in result.flagged_items if f.column == "Juice Extraction Method"]
+        assert len(jem_flagged) == 1
+    
+    def test_hpp_does_not_default_to_centrifugal(self):
+        """HPP products should not default to NA/Centrifugal."""
+        df = _make_df({"Processing Method": "HPP"})
+        result = normalize(df)
+        # Should be Cold Pressed, not NA/Centrifugal
+        assert result.dataframe.at[0, "Juice Extraction Method"] == "Cold Pressed"
+    
+    def test_explicit_indicators_override_default(self):
+        """Explicit indicators override the NA/Centrifugal default."""
+        df = _make_df({
+            "Processing Method": "Pasteurized",
+            "Claims": "not from concentrate"
+        })
+        result = normalize(df)
+        # Claims rule wins over default
+        assert result.dataframe.at[0, "Juice Extraction Method"] == "Squeezed"
+    
+    def test_brand_overrides_default(self):
+        """Brand rule overrides NA/Centrifugal default."""
+        df = _make_df({
+            "Brand": "Tropicana",
+            "Processing Method": "Pasteurized"
+        })
+        result = normalize(df)
+        # Brand rule wins
+        assert result.dataframe.at[0, "Juice Extraction Method"] == "Squeezed"

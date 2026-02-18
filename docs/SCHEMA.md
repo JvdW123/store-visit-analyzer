@@ -29,8 +29,8 @@
 | 20 | Packaging Size (ml) | Integer | No | Direct match | Must be numeric |
 | 21 | Price per Liter (EUR) | Float | No | Calculated | Price (EUR) / (Packaging Size / 1000). 2 decimal places. |
 | 22 | Need State | Text | No | Raw: "Sub-segment" | "Indulgence", "Functional" |
-| 23 | Juice Extraction Method | Text | No | LLM-inferred | "Squeezed", "Cold Pressed", "From Concentrate" |
-| 24 | Processing Method | Text | No | Direct + LLM | "Pasteurized", "HPP" |
+| 23 | Juice Extraction Method | Text | No | Brand-based + Deterministic + LLM | "Squeezed", "Cold Pressed", "From Concentrate", "NA/Centrifugal" |
+| 24 | Processing Method | Text | No | Direct + LLM | "Pasteurized", "HPP", "Raw" |
 | 25 | HPP Treatment | Text | No | Direct + LLM | "Yes", "No" |
 | 26 | Packaging Type | Text | No | Direct match | "PET Bottle", "Tetra Pak", "Can", "Carton", "Glass Bottle" |
 | 27 | Claims | Text | No | Direct match | Free text, as-is from source |
@@ -87,7 +87,7 @@ For unmatched column names: fuzzy string matching → LLM fallback → flag for 
 | Currency | From Country mapping | UK → "GBP", France/Germany → "EUR" |
 | Price (EUR) | `Price_Local × exchange_rate` | 1.0 if already EUR |
 | Price per Liter (EUR) | `Price_EUR / (Packaging_Size_ml / 1000)` | Blank if either input is missing |
-| Juice Extraction Method | Deterministic rules first (HPP Treatment, Processing Method, Claims/Notes), LLM fallback | See RULES.md |
+| Juice Extraction Method | Brand-based rules (highest priority), then deterministic rules (HPP Treatment, Processing Method, Claims/Notes), then default to "NA/Centrifugal" for pasteurized, LLM fallback | See RULES.md and BRAND_MAPPINGS.md |
 | Flavor | LLM-inferred from Product Name | Extracted flavor/fruit from product name text |
 
 ---

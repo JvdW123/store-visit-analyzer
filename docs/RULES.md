@@ -98,7 +98,7 @@ All matching is case-insensitive. Leading/trailing whitespace is stripped before
 | null / blank | blank |
 
 ### Processing Method
-**Valid values:** "Pasteurized", "HPP"
+**Valid values:** "Pasteurized", "HPP", "Raw"
 
 | Raw Value | Normalized |
 |-----------|-----------|
@@ -107,14 +107,14 @@ All matching is case-insensitive. Leading/trailing whitespace is stripped before
 | "Heat treated", "Heat-treated" | "Pasteurized" |
 | "Thermally treated", "Thermally pasteurised", "Thermally pasteurized" | "Pasteurized" |
 | "Cold-pressed", "Cold pressed", "Pressed" | blank (informs Juice Extraction Method instead) |
-| "unpasteurised", "Unpasteurised", "Not pasteurised" | blank (removed as Processing Method value) |
+| "unpasteurised", "Unpasteurised", "Unpasteurized", "Not pasteurised", "Not pasteurized", "Raw", "raw" | **"Raw"** (no heat treatment) |
 | "Freshly Squeezed", "freshly squeezed" | blank (informs Juice Extraction Method instead) |
 | "HPP", "HPP Treated", "HPP Treatment" | "HPP" |
 | "Unknown", "unknown" | blank |
 | null / blank | blank |
 
 **Additional rule:** If HPP Treatment = "Yes" AND Processing Method is blank → set Processing Method = "HPP"
-**LLM fallback:** For remaining blank Processing Method values, the LLM reads Claims + Notes + Brand to determine "Pasteurized" or "HPP". If the LLM cannot determine → leave blank.
+**LLM fallback:** For remaining blank Processing Method values, the LLM reads Claims + Notes + Brand to determine "Pasteurized", "HPP", or "Raw". "Raw" indicates unpasteurized/no heat treatment. If the LLM cannot determine → leave blank.
 
 ### HPP Treatment
 | Raw Value | Normalized |
@@ -169,12 +169,13 @@ All matching is case-insensitive. Leading/trailing whitespace is stripped before
 All other non-blank values → send to LLM for classification.
 
 ### Juice Extraction Method — Deterministic Inference Rules
-**Valid values:** "Cold Pressed", "Squeezed", "From Concentrate"
+**Valid values:** "Cold Pressed", "Squeezed", "From Concentrate", "NA/Centrifugal"
 
 Deterministic rules are applied in order; first match wins per row:
 
 | # | Rule | Result |
 |---|------|--------|
+| 0 | **Brand-based lookup** (fuzzy match ≥85%, UK market only) | Set both Juice Extraction Method AND Processing Method per brand mapping (see BRAND_MAPPINGS.md). **HIGHEST PRIORITY** — overrides all other rules. Conflicts with explicit indicators are flagged for manual review (yellow highlighting). |
 | 1 | HPP Treatment == "Yes" | "Cold Pressed" |
 | 2 | Processing Method == "HPP" | "Cold Pressed" |
 | 3 | Processing Method == "Freshly Squeezed" | "Squeezed" |
@@ -182,11 +183,26 @@ Deterministic rules are applied in order; first match wins per row:
 | 5 | Claims or Notes contain "from concentrate" but NOT "not from concentrate" (case-insensitive) | "From Concentrate" |
 | 6 | Claims or Notes contain "cold pressed" or "cold-pressed" (case-insensitive) | "Cold Pressed" |
 | 7 | Claims or Notes contain "squeezed" or "freshly squeezed" (case-insensitive) | "Squeezed" |
-| 8 | None of the above match | Flag for LLM |
+| 8 | Processing Method is "Pasteurized" (or variants) | **"NA/Centrifugal"** (default assumption for pasteurized products) - **FLAGGED for manual review** with yellow highlighting |
+| 9 | None of the above match | Flag for LLM |
+
+#### Brand-Based Rules (UK Market)
+
+**Priority:** HIGHEST (applied before all other rules)
+
+Brand mappings provide both Juice Extraction Method and Processing Method based on known brand practices. Fuzzy matching with 85% similarity threshold handles spelling variations (e.g., "Tropicanna" → "Tropicana").
+
+**Conflict Detection:** When explicit indicators (HPP Treatment, Claims, Notes) contradict brand mapping, the brand value is still applied BUT the row is flagged with a **yellow highlight** for manual review.
+
+**Conflict Examples:**
+- Brand: "Tropicana" (mapping says "Squeezed") but Claims contain "from concentrate" → Conflict flagged, brand value used
+- Brand: "Innocent" (mapping says "Pasteurized") but HPP Treatment = "Yes" → Conflict flagged, brand value used
+
+See `config/brand_mappings.py` for the complete UK brand list (17 brands currently mapped).
 
 **LLM prompt context for Juice Extraction Method:** Brand, Sub-brand, Product Name, Claims, Notes, Processing Method, HPP Treatment. The Sub-brand may contain processing terminology (e.g. "Freshly Squeezed", "Cold Pressed").
 
-**LLM inference heuristic (when no explicit indicators exist):** If Processing Method is "Pasteurized" and no cold-press or squeeze keywords are present, infer from brand positioning: premium/fresh brands (e.g. Tropicana, Innocent, Naked) → likely "Squeezed"; budget brands or private label → likely "From Concentrate". If the product is labelled "pure juice" without further context, use brand to disambiguate between "Squeezed" and "From Concentrate".
+**LLM inference heuristic (when no explicit indicators exist):** Use "NA/Centrifugal" as the default for unclear pasteurized products. If Processing Method is "Pasteurized" and no cold-press or squeeze keywords are present, infer from brand positioning: premium/fresh brands (e.g. Tropicana, Innocent) → likely "Squeezed"; budget brands or private label → likely "From Concentrate" or "NA/Centrifugal".
 
 ### Flavor — LLM Extraction from Product Name
 The raw Excel column "Flavor" actually contains Product Name data (the text on the label/logo). After column mapping remaps raw "Flavor" → "Product Name", the Flavor column is populated by LLM inference.

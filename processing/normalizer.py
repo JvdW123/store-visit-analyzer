@@ -32,6 +32,8 @@ from config.normalization_rules import (
     LLM_ONLY_COLUMNS,
 )
 from config.schema import VALID_VALUES
+from config.brand_mappings import match_brand
+from processing.conflict_detector import BrandConflict, detect_conflicts
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +60,7 @@ class NormalizationResult:
     dataframe: pd.DataFrame = field(default_factory=pd.DataFrame)
     flagged_items: list[FlaggedItem] = field(default_factory=list)
     changes_log: list[dict] = field(default_factory=list)
+    conflicts_log: list[BrandConflict] = field(default_factory=list)
 
 
 # Context columns included with every flagged item so the LLM has enough
@@ -103,6 +106,7 @@ def normalize(dataframe: pd.DataFrame) -> NormalizationResult:
     result_df = dataframe.copy()
     all_flagged: list[FlaggedItem] = []
     all_changes: list[dict] = []
+    all_conflicts: list[BrandConflict] = []
 
     # ═══════════════════════════════════════════════════════════════
     # PHASE 1: Normalize ONLY HPP Treatment (Juice Extraction depends on it)
@@ -117,12 +121,13 @@ def normalize(dataframe: pd.DataFrame) -> NormalizationResult:
             all_changes.extend(column_changes)
 
     # ═══════════════════════════════════════════════════════════════
-    # PHASE 2: Infer Juice Extraction Method
+    # PHASE 2: Infer Juice Extraction Method (with brand-based rules)
     # (sees normalized HPP Treatment, raw Processing Method with keywords intact)
     # ═══════════════════════════════════════════════════════════════
-    jem_flagged, jem_changes = _infer_juice_extraction_method(result_df)
+    jem_flagged, jem_changes, jem_conflicts = _infer_juice_extraction_method(result_df)
     all_flagged.extend(jem_flagged)
     all_changes.extend(jem_changes)
+    all_conflicts.extend(jem_conflicts)
 
     # ═══════════════════════════════════════════════════════════════
     # PHASE 3: Normalize remaining columns (including Processing Method)
@@ -161,13 +166,15 @@ def normalize(dataframe: pd.DataFrame) -> NormalizationResult:
 
     logger.info(
         f"Normalization complete: {len(all_changes)} values changed, "
-        f"{len(all_flagged)} items flagged for review"
+        f"{len(all_flagged)} items flagged for review, "
+        f"{len(all_conflicts)} brand conflicts detected"
     )
 
     return NormalizationResult(
         dataframe=result_df,
         flagged_items=all_flagged,
         changes_log=all_changes,
+        conflicts_log=all_conflicts,
     )
 
 
@@ -371,7 +378,7 @@ def _flag_llm_only_column(
 
 def _infer_juice_extraction_method(
     dataframe: pd.DataFrame,
-) -> tuple[list[FlaggedItem], list[dict]]:
+) -> tuple[list[FlaggedItem], list[dict], list[BrandConflict]]:
     """
     Apply deterministic rules to infer Juice Extraction Method, then flag
     remaining blank rows for LLM.
@@ -380,7 +387,11 @@ def _infer_juice_extraction_method(
     so it can see raw values like "Cold-Pressed" and "Freshly Squeezed"
     that would otherwise be converted to blank.
 
+    NEW: Brand-based rules have HIGHEST PRIORITY (Option A).
+    
     Rules (applied in order, first match wins per row):
+      0. Brand-based lookup (fuzzy match ≥85%)        → Set both Extraction + Processing
+                                                          (detect conflicts with explicit indicators)
       1. HPP Treatment == "Yes"                       → "Cold Pressed"
       2. Processing Method == "HPP"                   → "Cold Pressed"
       3. Processing Method == "Freshly Squeezed"      → "Squeezed"
@@ -389,27 +400,33 @@ def _infer_juice_extraction_method(
          (but NOT "not from concentrate")             → "From Concentrate"
       6. Claims/Notes contain "cold pressed"/"cold-pressed" → "Cold Pressed"
       7. Claims/Notes contain "squeezed"/"freshly squeezed" → "Squeezed"
-      8. None matched AND value is blank              → flag for LLM
+      8. Processing Method == "Pasteurized"           → "NA/Centrifugal" (default)
+      9. None matched AND value is blank              → flag for LLM
 
     Args:
         dataframe: DataFrame to modify IN PLACE.
 
     Returns:
-        (flagged_items, changes_log) for this step.
+        (flagged_items, changes_log, conflicts_log) for this step.
     """
     col = "Juice Extraction Method"
     flagged: list[FlaggedItem] = []
     changes: list[dict] = []
+    conflicts: list[BrandConflict] = []
 
     if col not in dataframe.columns:
-        return flagged, changes
+        return flagged, changes, conflicts
 
+    has_brand = "Brand" in dataframe.columns
     has_hpp = "HPP Treatment" in dataframe.columns
     has_proc = "Processing Method" in dataframe.columns
     has_claims = "Claims" in dataframe.columns
     has_notes = "Notes" in dataframe.columns
 
     valid_set = VALID_VALUES.get(col, set())
+    
+    # Track which rows were set by brand rules (to avoid overwriting Processing Method later)
+    brand_set_rows = set()
 
     for idx in dataframe.index:
         current_value = dataframe.at[idx, col]
@@ -430,6 +447,11 @@ def _infer_juice_extraction_method(
             continue
 
         # Gather row data for rules
+        brand_val = ""
+        if has_brand:
+            v = dataframe.at[idx, "Brand"]
+            brand_val = str(v).strip() if not pd.isna(v) else ""
+        
         hpp_val = ""
         if has_hpp:
             v = dataframe.at[idx, "HPP Treatment"]
@@ -455,34 +477,81 @@ def _infer_juice_extraction_method(
         inferred: str | None = None
         rule_desc = ""
 
-        # Rule 1: HPP Treatment == "Yes"
-        if hpp_val == "Yes":
-            inferred = "Cold Pressed"
-            rule_desc = "HPP Treatment = Yes"
-        # Rule 2: Processing Method == "HPP"
-        elif proc_val == "HPP":
-            inferred = "Cold Pressed"
-            rule_desc = "Processing Method = HPP"
-        # Rule 3: Processing Method == "Freshly Squeezed"
-        elif proc_val == "Freshly Squeezed":
-            inferred = "Squeezed"
-            rule_desc = "Processing Method = Freshly Squeezed"
-        # Rule 4: Claims/Notes contain "not from concentrate" → Squeezed
-        elif "not from concentrate" in text_combined:
-            inferred = "Squeezed"
-            rule_desc = "Claims/Notes contain 'not from concentrate'"
-        # Rule 5: Claims/Notes contain "from concentrate" (excluding "not from concentrate")
-        elif "from concentrate" in text_combined:
-            inferred = "From Concentrate"
-            rule_desc = "Claims/Notes contain 'from concentrate'"
-        # Rule 6: Claims/Notes contain "cold pressed" or "cold-pressed"
-        elif "cold pressed" in text_combined or "cold-pressed" in text_combined:
-            inferred = "Cold Pressed"
-            rule_desc = "Claims/Notes contain 'cold pressed'"
-        # Rule 7: Claims/Notes contain "squeezed" or "freshly squeezed"
-        elif "squeezed" in text_combined:
-            inferred = "Squeezed"
-            rule_desc = "Claims/Notes contain 'squeezed'"
+        # ═══════════════════════════════════════════════════════════════
+        # Rule 0: Brand-based lookup (HIGHEST PRIORITY)
+        # ═══════════════════════════════════════════════════════════════
+        if brand_val:
+            brand_match = match_brand(brand_val)
+            if brand_match:
+                matched_brand, brand_mapping, similarity = brand_match
+                
+                # Detect conflicts with explicit indicators
+                row_conflicts = detect_conflicts(
+                    row_index=idx,
+                    brand_name=matched_brand,
+                    brand_mapping=brand_mapping,
+                    similarity_score=similarity,
+                    hpp_treatment=hpp_val,
+                    processing_method=proc_val,
+                    claims=claims_val,
+                    notes=notes_val
+                )
+                conflicts.extend(row_conflicts)
+                
+                # Apply brand values (brand wins even if conflicts exist)
+                inferred = brand_mapping["juice_extraction_method"]
+                rule_desc = f"brand: {matched_brand} ({similarity}%)"
+                
+                # Also set Processing Method if not already set
+                if has_proc:
+                    current_proc = dataframe.at[idx, "Processing Method"]
+                    if pd.isna(current_proc) or str(current_proc).strip() == "":
+                        dataframe.at[idx, "Processing Method"] = brand_mapping["processing_method"]
+                        changes.append({
+                            "row": idx,
+                            "column": "Processing Method",
+                            "original": "(blank)",
+                            "normalized": brand_mapping["processing_method"],
+                            "method": f"brand rule ({matched_brand}, {similarity}%)",
+                        })
+                        brand_set_rows.add(idx)
+        
+        # ═══════════════════════════════════════════════════════════════
+        # Explicit indicator rules (only if brand didn't match)
+        # ═══════════════════════════════════════════════════════════════
+        if inferred is None:
+            # Rule 1: HPP Treatment == "Yes"
+            if hpp_val == "Yes":
+                inferred = "Cold Pressed"
+                rule_desc = "HPP Treatment = Yes"
+            # Rule 2: Processing Method == "HPP"
+            elif proc_val == "HPP":
+                inferred = "Cold Pressed"
+                rule_desc = "Processing Method = HPP"
+            # Rule 3: Processing Method == "Freshly Squeezed"
+            elif proc_val == "Freshly Squeezed":
+                inferred = "Squeezed"
+                rule_desc = "Processing Method = Freshly Squeezed"
+            # Rule 4: Claims/Notes contain "not from concentrate" → Squeezed
+            elif "not from concentrate" in text_combined:
+                inferred = "Squeezed"
+                rule_desc = "Claims/Notes contain 'not from concentrate'"
+            # Rule 5: Claims/Notes contain "from concentrate" (excluding "not from concentrate")
+            elif "from concentrate" in text_combined:
+                inferred = "From Concentrate"
+                rule_desc = "Claims/Notes contain 'from concentrate'"
+            # Rule 6: Claims/Notes contain "cold pressed" or "cold-pressed"
+            elif "cold pressed" in text_combined or "cold-pressed" in text_combined:
+                inferred = "Cold Pressed"
+                rule_desc = "Claims/Notes contain 'cold pressed'"
+            # Rule 7: Claims/Notes contain "squeezed" or "freshly squeezed"
+            elif "squeezed" in text_combined:
+                inferred = "Squeezed"
+                rule_desc = "Claims/Notes contain 'squeezed'"
+            # Rule 8: Default to NA/Centrifugal for pasteurized products
+            elif proc_val.lower() in ["pasteurized", "pasteurised", "flash pasteurized", "gently pasteurized"]:
+                inferred = "NA/Centrifugal"
+                rule_desc = "default for pasteurized products"
 
         if inferred is not None:
             dataframe.at[idx, col] = inferred
@@ -493,8 +562,19 @@ def _infer_juice_extraction_method(
                 "normalized": inferred,
                 "method": f"deterministic rule ({rule_desc})",
             })
+            
+            # Flag NA/Centrifugal for manual review
+            if inferred == "NA/Centrifugal":
+                context = _build_context(dataframe, idx)
+                flagged.append(FlaggedItem(
+                    row_index=idx,
+                    column=col,
+                    original_value="",
+                    reason="Defaulted to NA/Centrifugal - please verify extraction method",
+                    context=context,
+                ))
         else:
-            # Rule 8: flag for LLM
+            # Rule 9: flag for LLM
             context = _build_context(dataframe, idx)
             flagged.append(FlaggedItem(
                 row_index=idx,
@@ -513,8 +593,13 @@ def _infer_juice_extraction_method(
         logger.info(
             f"Juice Extraction Method flagged for LLM: {len(flagged)} rows"
         )
+    if conflicts:
+        logger.warning(
+            f"Brand conflicts detected: {len(conflicts)} conflicts "
+            f"(rows will be highlighted for manual review)"
+        )
 
-    return flagged, changes
+    return flagged, changes, conflicts
 
 
 def _flag_missing_flavor(
