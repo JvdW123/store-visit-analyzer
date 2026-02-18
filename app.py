@@ -284,15 +284,11 @@ if raw_files:
     hdr_cols[4].markdown("**Store Name**")
     hdr_cols[5].markdown("**Store Format**")
 
-    low_confidence_count = 0
-
     for idx, parsed in enumerate(parsed_results):
         row_cols = st.columns([2, 1, 1, 1.5, 1.5, 1])
 
         # ── Filename (read-only) ─────────────────────────────────
         row_cols[0].text(parsed["filename"])
-        if parsed["confidence"] < 80:
-            low_confidence_count += 1
 
         # ── Country dropdown ─────────────────────────────────────
         default_country_idx = 0  # "United Kingdom"
@@ -370,13 +366,6 @@ if raw_files:
                 value="",
                 key=f"meta_{idx}_format_custom",
             )
-
-    # Warn about low-confidence parses
-    if low_confidence_count > 0:
-        st.warning(
-            f"{low_confidence_count} file(s) have low parsing confidence. "
-            "Please verify all fields carefully."
-        )
 
     # Confirm & Process button
     if st.button("Confirm & Process ▶", type="primary", use_container_width=True):
