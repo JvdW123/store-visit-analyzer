@@ -698,6 +698,11 @@ if (
     and st.session_state["final_dataframe"] is not None
 ):
     final_df = st.session_state["final_dataframe"]
+
+    # Ensure object columns have consistent string types (avoids Arrow serialization errors)
+    for col in final_df.select_dtypes(include=["object"]).columns:
+        final_df[col] = final_df[col].fillna("").astype(str)
+
     all_flagged_items = st.session_state["all_flagged_items"]
     all_changes_log = st.session_state["all_changes_log"]
     all_errors = st.session_state["all_errors"]
