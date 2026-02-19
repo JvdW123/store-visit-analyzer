@@ -25,6 +25,7 @@ import requests
 import streamlit as st
 
 from config.filename_config import COUNTRIES, COUNTRY_RETAILERS, STORE_FORMATS
+from config.schema import COLUMN_TYPES
 from processing.file_reader import read_excel_file
 from processing.filename_parser import parse_filename
 from processing.column_mapper import map_columns
@@ -699,9 +700,18 @@ if (
 ):
     final_df = st.session_state["final_dataframe"]
 
-    # Ensure object columns have consistent string types (avoids Arrow serialization errors)
+    # Ensure consistent column types to avoid Arrow serialization errors in st.dataframe().
+    # After pd.concat, numeric columns can land as object dtype when they contain None values.
+    # Casting those to str would destroy the numbers — so numeric columns are coerced back to
+    # their proper numeric type, while text columns are cast to str as before.
+    _numeric_cols = {
+        col for col, dtype in COLUMN_TYPES.items() if dtype in ("integer", "float")
+    }
     for col in final_df.select_dtypes(include=["object"]).columns:
-        final_df[col] = final_df[col].fillna("").astype(str)
+        if col in _numeric_cols:
+            final_df[col] = pd.to_numeric(final_df[col], errors="coerce")
+        else:
+            final_df[col] = final_df[col].fillna("").astype(str)
 
     all_flagged_items = st.session_state["all_flagged_items"]
     all_changes_log = st.session_state["all_changes_log"]
