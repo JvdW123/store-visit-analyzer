@@ -431,9 +431,14 @@ def _infer_juice_extraction_method(
     for idx in dataframe.index:
         current_value = dataframe.at[idx, col]
 
-        # If a valid value is already set, skip
+        # If a valid value is already set, strip any whitespace and skip
         if not pd.isna(current_value) and str(current_value).strip() != "":
-            if str(current_value).strip() in valid_set:
+            stripped = str(current_value).strip()
+            if stripped in valid_set:
+                # Write the stripped value back to fix trailing/leading spaces
+                # (e.g. "Squeezed " → "Squeezed") before skipping
+                if str(current_value) != stripped:
+                    dataframe.at[idx, col] = stripped
                 continue
             # Non-blank, non-valid value — flag it
             context = _build_context(dataframe, idx)
