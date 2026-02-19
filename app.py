@@ -35,6 +35,7 @@ from processing.price_calculator import calculate_prices, COUNTRY_CURRENCY_MAP
 from processing.llm_cleaner import clean_with_llm
 from processing.merger import merge_dataframes, apply_overlap_decisions
 from processing.quality_checker import check_quality
+from processing.flavor_cleaner import apply_layer1_to_dataframe, harmonize_flavors_with_llm
 from utils.excel_formatter import format_and_save
 
 logger = logging.getLogger(__name__)
@@ -250,6 +251,7 @@ if raw_files != st.session_state.get("_prev_raw_files"):
     st.session_state["processing_complete"] = False
     st.session_state["overlap_decisions_applied"] = False
     st.session_state["final_dataframe"] = None
+    st.session_state["flavor_layer2_applied"] = False
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -413,6 +415,7 @@ if raw_files:
             st.session_state["processing_complete"] = False
             st.session_state["overlap_decisions_applied"] = False
             st.session_state["final_dataframe"] = None
+            st.session_state["flavor_layer2_applied"] = False
             st.rerun()
 
 
@@ -577,6 +580,11 @@ if (
                 elif file_flagged and not api_key:
                     llm_skipped = True
 
+                # ── Step 8: Layer 1 flavor cleaning ──────────────
+                with status_container.container():
+                    st.text(f"Cleaning flavors for {filename}...")
+                dataframe = apply_layer1_to_dataframe(dataframe)
+
                 processed_dataframes.append(dataframe)
                 source_filenames.append(filename)
 
@@ -699,6 +707,19 @@ if (
     and st.session_state["final_dataframe"] is not None
 ):
     final_df = st.session_state["final_dataframe"]
+
+    # ── Layer 2: LLM flavor harmonization (runs once per session) ─────────
+    if not st.session_state.get("flavor_layer2_applied"):
+        if api_key:
+            with st.spinner("Harmonizing flavor values with LLM..."):
+                final_df = harmonize_flavors_with_llm(
+                    final_df, api_key, "flavor_clean_cache.json"
+                )
+        else:
+            # No API key — Layer 2 skipped; Flavor_Clean stays as Layer 1 output
+            logger.info("Layer 2 flavor harmonization skipped — no API key")
+        st.session_state["final_dataframe"] = final_df
+        st.session_state["flavor_layer2_applied"] = True
 
     # Ensure consistent column types to avoid Arrow serialization errors in st.dataframe().
     # After pd.concat, numeric columns can land as object dtype when they contain None values.

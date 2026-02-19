@@ -22,7 +22,6 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
-from config.normalization_rules import FLAVOR_MAP, FLAVOR_WORD_MAP
 from config.schema import VALID_VALUES
 from processing.normalizer import FlaggedItem
 
@@ -563,39 +562,12 @@ def _create_batches(
 
 def _normalize_flavor(value: str) -> str:
     """
-    Post-extraction normalization for Flavor values.
-
-    1. Check FLAVOR_MAP for an exact (case-insensitive) replacement.
-    2. If not found, apply general separator normalization:
-       replace "/" with " & " (handling optional surrounding spaces).
-    3. Apply FLAVOR_WORD_MAP word-level replacements (case-insensitive
-       substring replacement for spelling standardization).
-
-    Args:
-        value: The raw Flavor string from the LLM.
-
-    Returns:
-        Normalized Flavor string.
+    No-op pass-through — Layer 1 cleaning is handled by flavor_cleaner.py
+    in Step 8, which runs immediately after this step and processes the
+    entire Flavor column (both LLM-extracted and pre-existing values)
+    into Flavor_Clean.
     """
-    if not value or not value.strip():
-        return value
-
-    stripped = value.strip()
-    lookup_key = stripped.lower()
-
-    # Step 1: Exact match in FLAVOR_MAP
-    if lookup_key in FLAVOR_MAP:
-        return FLAVOR_MAP[lookup_key]
-
-    # Step 2: General separator normalization: " / " or "/" → " & "
-    normalized = re.sub(r"\s*/\s*", " & ", stripped)
-
-    # Step 3: Word-level replacements from FLAVOR_WORD_MAP
-    for raw_word, canonical in FLAVOR_WORD_MAP.items():
-        pattern = re.compile(re.escape(raw_word), re.IGNORECASE)
-        normalized = pattern.sub(canonical, normalized)
-
-    return normalized
+    return value
 
 
 # ═══════════════════════════════════════════════════════════════════════════

@@ -228,6 +228,17 @@ FLAVOR_MAP: dict[str, str] = {
 FLAVOR_WORD_MAP: dict[str, str] = {
     "passionfruit": "Passion Fruit",
     "passion-fruit": "Passion Fruit",
+    "dragonfruit": "Dragon Fruit",
+    "starfruit": "Star Fruit",
+    "bloodorgange": "Blood Orange",
+    "blood-orange": "Blood Orange",
+    "bluberry": "Blueberry",
+    "rasberry": "Raspberry",
+    "strwaberry": "Strawberry",
+    "blackcurrent": "Blackcurrant",
+    "cocunut": "Coconut",
+    "pinnaple": "Pineapple",
+    "tumeric": "Turmeric",
 }
 
 # ---------------------------------------------------------------------------
