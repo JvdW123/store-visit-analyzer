@@ -36,6 +36,8 @@ from processing.llm_cleaner import clean_with_llm
 from processing.merger import merge_dataframes, apply_overlap_decisions
 from processing.quality_checker import check_quality
 from processing.flavor_cleaner import apply_layer1_to_dataframe, harmonize_flavors_with_llm
+from processing.flavor_profiler import classify_flavor_profile
+from processing.vegetable_tagger import tag_contains_vegetables
 from utils.excel_formatter import format_and_save
 
 logger = logging.getLogger(__name__)
@@ -171,6 +173,8 @@ def _init_session_state() -> None:
         "total_llm_cost": 0.0,
         "total_input_tokens": 0,
         "total_output_tokens": 0,
+        "vegetable_tagger_applied": False,
+        "veg_tag_summary": {"layer1": 0, "layer2": 0, "layer3": 0},
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -252,6 +256,8 @@ if raw_files != st.session_state.get("_prev_raw_files"):
     st.session_state["overlap_decisions_applied"] = False
     st.session_state["final_dataframe"] = None
     st.session_state["flavor_layer2_applied"] = False
+    st.session_state["vegetable_tagger_applied"] = False
+    st.session_state["veg_tag_summary"] = {"layer1": 0, "layer2": 0, "layer3": 0}
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -416,6 +422,8 @@ if raw_files:
             st.session_state["overlap_decisions_applied"] = False
             st.session_state["final_dataframe"] = None
             st.session_state["flavor_layer2_applied"] = False
+            st.session_state["vegetable_tagger_applied"] = False
+            st.session_state["veg_tag_summary"] = {"layer1": 0, "layer2": 0, "layer3": 0}
             st.rerun()
 
 
@@ -445,6 +453,10 @@ if (
     source_files_info: list[dict] = []
     llm_resolved_count = 0
     llm_skipped = False
+    # Tracks the cumulative number of rows across all processed files so that
+    # each file's FlaggedItem.row_index values can be shifted into the
+    # coordinate space of the post-merge DataFrame (which uses ignore_index=True).
+    cumulative_row_offset = 0
 
     # Write uploaded files to a temp directory so file_reader can use Paths
     with tempfile.TemporaryDirectory() as temp_dir:
@@ -516,6 +528,10 @@ if (
                     st.text(f"Normalizing {filename}...")
                 norm_result = normalize(dataframe)
                 dataframe = norm_result.dataframe
+                # Shift each flagged item's row_index by the cumulative offset so
+                # it maps correctly into the merged DataFrame's global index space.
+                for item in norm_result.flagged_items:
+                    item.row_index += cumulative_row_offset
                 all_flagged_items.extend(norm_result.flagged_items)
                 all_changes_log.extend(norm_result.changes_log)
 
@@ -546,47 +562,16 @@ if (
                         f"{filename} row {err['row']}: {err['column']} — {err['error']}"
                     )
 
-                # ── Step 7: LLM cleaning (optional) ──────────────
-                file_flagged = [
-                    item for item in norm_result.flagged_items
-                ]
-                if file_flagged and api_key:
-                    with status_container.container():
-                        st.text(f"Running LLM cleaning for {filename}...")
-                    with st.spinner(f"Calling Claude API for {filename}..."):
-                        llm_result = clean_with_llm(
-                            dataframe, file_flagged, api_key
-                        )
-                    dataframe = llm_result.dataframe
-                    llm_resolved_count += len(llm_result.resolved_items)
-                    llm_skipped = llm_result.skipped
-                    
-                    # Accumulate token usage, cost, and batch stats
-                    st.session_state["total_llm_cost"] += llm_result.api_cost_estimate
-                    st.session_state["total_input_tokens"] += llm_result.input_tokens
-                    st.session_state["total_output_tokens"] += llm_result.output_tokens
-                    st.session_state["llm_failed_batches"] += llm_result.failed_batches
-                    st.session_state["llm_total_batches"] += llm_result.total_batches
-
-                    # Remove resolved items from the flagged list
-                    resolved_keys = {
-                        (item["row_index"], item["column"])
-                        for item in llm_result.resolved_items
-                    }
-                    all_flagged_items = [
-                        item for item in all_flagged_items
-                        if (item.row_index, item.column) not in resolved_keys
-                    ]
-                elif file_flagged and not api_key:
-                    llm_skipped = True
-
-                # ── Step 8: Layer 1 flavor cleaning ──────────────
+                # ── Step 7: Layer 1 flavor cleaning ──────────────
                 with status_container.container():
                     st.text(f"Cleaning flavors for {filename}...")
                 dataframe = apply_layer1_to_dataframe(dataframe)
 
                 processed_dataframes.append(dataframe)
                 source_filenames.append(filename)
+                # Advance the offset so the next file's flagged items are shifted
+                # to the correct position in the merged DataFrame.
+                cumulative_row_offset += len(dataframe)
 
                 source_files_info.append({
                     "filename": filename,
@@ -617,6 +602,39 @@ if (
                 processed_dataframes,
                 source_filenames,
             )
+
+            # ── Step 8: LLM cleaning — single call across all files ───────
+            # All flagged items from every file have been accumulated with
+            # globally-unique row indices (shifted by cumulative_row_offset above),
+            # so one clean_with_llm() call resolves everything in one API round-trip.
+            if all_flagged_items and api_key:
+                with st.spinner(
+                    f"Calling Claude API to resolve {len(all_flagged_items)} "
+                    "flagged items across all files..."
+                ):
+                    llm_result = clean_with_llm(
+                        merge_result.dataframe, all_flagged_items, api_key
+                    )
+                merge_result.dataframe = llm_result.dataframe
+                llm_resolved_count = len(llm_result.resolved_items)
+                llm_skipped = llm_result.skipped
+                st.session_state["total_llm_cost"] += llm_result.api_cost_estimate
+                st.session_state["total_input_tokens"] += llm_result.input_tokens
+                st.session_state["total_output_tokens"] += llm_result.output_tokens
+                st.session_state["llm_failed_batches"] += llm_result.failed_batches
+                st.session_state["llm_total_batches"] += llm_result.total_batches
+                # Remove resolved items from the flagged list so they are not
+                # shown as unresolved in the quality report.
+                resolved_keys = {
+                    (item["row_index"], item["column"])
+                    for item in llm_result.resolved_items
+                }
+                all_flagged_items = [
+                    item for item in all_flagged_items
+                    if (item.row_index, item.column) not in resolved_keys
+                ]
+            elif all_flagged_items and not api_key:
+                llm_skipped = True
 
             # Save results to session state
             st.session_state["processed_dataframes"] = processed_dataframes
@@ -720,6 +738,21 @@ if (
             logger.info("Layer 2 flavor harmonization skipped — no API key")
         st.session_state["final_dataframe"] = final_df
         st.session_state["flavor_layer2_applied"] = True
+
+    # ── Flavor Profile Classification (runs once per session) ─────────────
+    if not st.session_state.get("flavor_profiler_applied"):
+        with st.spinner("Classifying Single/Blend and Flavor Profiles..."):
+            final_df = classify_flavor_profile(final_df, api_key)
+        st.session_state["final_dataframe"] = final_df
+        st.session_state["flavor_profiler_applied"] = True
+
+    # ── Contains_Vegetables tagging (runs once per session) ───────────────
+    if not st.session_state.get("vegetable_tagger_applied"):
+        with st.spinner("Tagging vegetable-containing SKUs..."):
+            final_df, veg_summary = tag_contains_vegetables(final_df, api_key)
+        st.session_state["final_dataframe"] = final_df
+        st.session_state["veg_tag_summary"] = veg_summary
+        st.session_state["vegetable_tagger_applied"] = True
 
     # Ensure consistent column types to avoid Arrow serialization errors in st.dataframe().
     # After pd.concat, numeric columns can land as object dtype when they contain None values.
@@ -865,6 +898,88 @@ if (
             f"⚠️ {issue_count} quality issue(s) found. "
             "Review the Data Quality Report sheet in the downloaded Excel."
         )
+
+    # ── Flavor Profile Summary ────────────────────────────────────
+    st.divider()
+    st.header("🍊 Flavor Profile Summary")
+
+    if "Flavor_Profile" in final_df.columns and "Facings" in final_df.columns:
+        _profile_work = final_df.copy()
+        _profile_work["Facings"] = pd.to_numeric(_profile_work["Facings"], errors="coerce").fillna(0)
+
+        _profile_summary = (
+            _profile_work.groupby("Flavor_Profile", dropna=False)
+            .agg(SKUs=("Flavor_Profile", "count"), Facings=("Facings", "sum"))
+            .reset_index()
+        )
+        _total_facings = _profile_summary["Facings"].sum()
+        _profile_summary["% Facings"] = (
+            (_profile_summary["Facings"] / _total_facings * 100).round(1)
+            if _total_facings > 0 else 0.0
+        )
+        _profile_summary = _profile_summary.sort_values("Facings", ascending=False).reset_index(drop=True)
+        _profile_summary["Facings"] = _profile_summary["Facings"].astype(int)
+        _profile_summary["SKUs"] = _profile_summary["SKUs"].astype(int)
+        _profile_summary["% Facings"] = _profile_summary["% Facings"].map(lambda x: f"{x:.1f}%")
+
+        st.dataframe(
+            _profile_summary.rename(columns={"Flavor_Profile": "Segment"}),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        # Show "Other" flavors in an expander for analyst review
+        _other_rows = final_df[final_df["Flavor_Profile"] == "Other"].copy()
+        if not _other_rows.empty:
+            _other_rows["Facings"] = pd.to_numeric(_other_rows["Facings"], errors="coerce").fillna(0)
+            _other_summary = (
+                _other_rows.groupby("Flavor_Clean", dropna=False)["Facings"]
+                .sum()
+                .reset_index()
+                .sort_values("Facings", ascending=False)
+                .reset_index(drop=True)
+            )
+            _other_summary["Facings"] = _other_summary["Facings"].astype(int)
+            with st.expander(
+                f"Other flavors not yet classified ({len(_other_summary)} unique, "
+                f"{_other_summary['Facings'].sum()} facings total)"
+            ):
+                st.caption(
+                    "These flavors did not match any segment keyword. "
+                    "Add keywords to config/flavor_profile_config.py to classify them."
+                )
+                st.dataframe(
+                    _other_summary.rename(columns={"Flavor_Clean": "Flavor", "Facings": "Facings"}),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+        else:
+            st.success("All flavors classified — no 'Other' SKUs.")
+    else:
+        st.info("Flavor Profile data not available for this dataset.")
+
+    # ── Contains Vegetables Summary ───────────────────────────────
+    st.divider()
+    st.header("🥦 Contains Vegetables Summary")
+
+    veg_summary = st.session_state.get("veg_tag_summary", {"layer1": 0, "layer2": 0, "layer3": 0})
+    veg_layer1 = veg_summary.get("layer1", 0)
+    veg_layer2 = veg_summary.get("layer2", 0)
+    veg_layer3 = veg_summary.get("layer3", 0)
+    veg_total = veg_layer1 + veg_layer2 + veg_layer3
+
+    veg_cols = st.columns(4)
+    with veg_cols[0]:
+        st.metric("Total Tagged Yes", veg_total)
+    with veg_cols[1]:
+        st.metric("Layer 1 (Keyword Match)", veg_layer1)
+    with veg_cols[2]:
+        st.metric("Layer 2 (Propagation)", veg_layer2)
+    with veg_cols[3]:
+        st.metric("Layer 3 (LLM)", veg_layer3)
+
+    if veg_total == 0:
+        st.info("No SKUs identified as containing vegetables in this dataset.")
 
     # ── Data Error Check ─────────────────────────────────────────
     st.divider()
