@@ -175,6 +175,7 @@ def _init_session_state() -> None:
         "total_output_tokens": 0,
         "vegetable_tagger_applied": False,
         "veg_tag_summary": {"layer1": 0, "layer2": 0, "layer3": 0},
+        "flavor_layer1_catchup_applied": False,
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -256,6 +257,7 @@ if raw_files != st.session_state.get("_prev_raw_files"):
     st.session_state["overlap_decisions_applied"] = False
     st.session_state["final_dataframe"] = None
     st.session_state["flavor_layer2_applied"] = False
+    st.session_state["flavor_layer1_catchup_applied"] = False
     st.session_state["vegetable_tagger_applied"] = False
     st.session_state["veg_tag_summary"] = {"layer1": 0, "layer2": 0, "layer3": 0}
 
@@ -422,6 +424,7 @@ if raw_files:
             st.session_state["overlap_decisions_applied"] = False
             st.session_state["final_dataframe"] = None
             st.session_state["flavor_layer2_applied"] = False
+            st.session_state["flavor_layer1_catchup_applied"] = False
             st.session_state["vegetable_tagger_applied"] = False
             st.session_state["veg_tag_summary"] = {"layer1": 0, "layer2": 0, "layer3": 0}
             st.rerun()
@@ -725,6 +728,33 @@ if (
     and st.session_state["final_dataframe"] is not None
 ):
     final_df = st.session_state["final_dataframe"]
+
+    # ── Layer 1 catch-up: rows where LLM extracted Flavor after Layer 1 ran ─
+    # The normalizer flags rows with Product Name but no Flavor for LLM extraction.
+    # The LLM fills in Flavor post-merge — after Layer 1 has already run.
+    # Those rows end up with Flavor populated but Flavor_Clean = NaN.
+    # This pass applies Layer 1 rules to any such rows before Layer 2 sees them.
+    if not st.session_state.get("flavor_layer1_catchup_applied"):
+        catchup_mask = (
+            final_df["Flavor"].notna()
+            & final_df["Flavor"].astype(str).str.strip().ne("")
+            & (
+                final_df["Flavor_Clean"].isna()
+                | final_df["Flavor_Clean"].astype(str).str.strip().eq("")
+            )
+        ) if "Flavor" in final_df.columns and "Flavor_Clean" in final_df.columns else pd.Series(False, index=final_df.index)
+        if catchup_mask.any():
+            final_df.loc[catchup_mask, "Flavor_Clean"] = (
+                final_df.loc[catchup_mask, "Flavor"].apply(
+                    lambda v: apply_layer1_rules(str(v)) if pd.notna(v) and str(v).strip() else v
+                )
+            )
+            logger.info(
+                f"Layer 1 catch-up: applied to {catchup_mask.sum()} rows "
+                "where LLM extracted Flavor after Layer 1 had run"
+            )
+        st.session_state["final_dataframe"] = final_df
+        st.session_state["flavor_layer1_catchup_applied"] = True
 
     # ── Layer 2: LLM flavor harmonization (runs once per session) ─────────
     if not st.session_state.get("flavor_layer2_applied"):
